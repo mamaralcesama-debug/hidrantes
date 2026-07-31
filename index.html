@@ -8,6 +8,9 @@
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   
+  <!-- PROJ4JS (Conversão UTM -> Lat/Long) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
+
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     body { background-color: #f4f6f9; color: #333; display: flex; flex-direction: column; height: 100vh; }
@@ -69,7 +72,7 @@
 
   <header>
     <h1>🚨 Monitoramento & Histórico em Tempo Real</h1>
-    <div id="status-conexao">Conectando ao Firebase...</div>
+    <div id="status-conexao">Carregando dados do servidor...</div>
   </header>
 
   <div class="main-container">
@@ -108,12 +111,8 @@
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 
   <script>
-    // 1. CADASTRO FIXO DOS HIDRANTES
-    const CADASTRO_HIDRANTES = {
-      "HIDRANTE-001": { nome: "Hidrante Bloco A (Entrada)", lat: -21.7642, lng: -43.3503 },
-      "HIDRANTE-002": { nome: "Hidrante Bloco B (Garagem)", lat: -21.7650, lng: -43.3510 },
-      "HIDRANTE-003": { nome: "Hidrante Reservatório Central", lat: -21.7635, lng: -43.3495 }
-    };
+    // 1. OBJETO DINÂMICO PARA CADASTRO DE HIDRANTES (PREENCHIDO VIA CSV)
+    let CADASTRO_HIDRANTES = {};
 
     // 2. CONFIGURAÇÃO DO FIREBASE
     const firebaseConfig = {
@@ -123,11 +122,10 @@
     const database = firebase.database();
 
     // 3. INICIALIZAÇÃO DO MAPA
-    const map = L.map('map').setView([-21.7642, -43.3503], 16);
+    const map = L.map('map').setView([-21.7642, -43.3503], 14);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
     const marcadoresMapa = {};
-    const audioAlerta = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
 
     const criarIcone = (cor) => new L.Icon({
       iconUrl: `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-${cor}.png`,
@@ -141,24 +139,107 @@
     const iconeCinza = criarIcone('grey');
 
     const selectFiltro = document.getElementById('filtro-hidrante');
-    Object.keys(CADASTRO_HIDRANTES).forEach(id => {
-      const opt = document.createElement('option');
-      opt.value = id; opt.textContent = id;
-      selectFiltro.appendChild(opt);
 
-      const info = CADASTRO_HIDRANTES[id];
-      const marker = L.marker([info.lat, info.lng], { icon: iconeCinza }).addTo(map);
-      
-      marker.on('click', () => {
-        selectFiltro.value = id;
-        renderizarTabelaEAtualizarMapa();
+    // 4. FUNÇÕES DE CONVERSÃO DE COORDENADAS (UTM -> WGS84)
+    function converterUTMparaLatLong(easting, northing, zone) {
+      if (!easting || !northing) return null;
+      const numeroZona = parseInt(String(zone).replace(/\D/g, ''));
+      const projUTM = `+proj=utm +zone=${numeroZona} +south +ellps=WGS84 +datum=WGS84 +units=m +no_defs`;
+      const projWGS84 = "+proj=longlat +datum=WGS84 +no_defs";
+
+      try {
+        const res = proj4(projUTM, projWGS84, [parseFloat(easting), parseFloat(northing)]);
+        return { lat: res[1], lng: res[0] };
+      } catch (err) {
+        console.error("Erro ao converter UTM:", err);
+        return null;
+      }
+    }
+
+    // 5. CARREGAMENTO DO CSV HOSPEDADO NO GITHUB PAGES
+    async function carregarHidrantesDoCSV() {
+      try {
+        // Busca o arquivo hidrantes.csv no repositório com nocache para garantir a versão atual
+        const resposta = await fetch('hidrantes.csv?v=' + new Date().getTime());
+        if (!resposta.ok) throw new Error("Arquivo CSV não encontrado no GitHub.");
+
+        const textoCSV = await resposta.text();
+        const linhas = textoCSV.split(/\r\n|\n/);
+        
+        CADASTRO_HIDRANTES = {}; 
+        let bounds = L.latLngBounds();
+        let contador = 0;
+
+        // Processa linhas ignorando o cabeçalho (i = 1)
+        for (let i = 1; i < linhas.length; i++) {
+          const linha = linhas[i].trim();
+          if (!linha) continue;
+
+          const colunas = linha.split(/,|;/);
+          if (colunas.length >= 5) {
+            const id = colunas[0].trim().toUpperCase();
+            const logradouro = colunas[1].trim();
+            const este = colunas[2].trim();
+            const norte = colunas[3].trim();
+            const zona = colunas[4].trim();
+
+            const coords = converterUTMparaLatLong(este, norte, zona);
+
+            if (coords) {
+              CADASTRO_HIDRANTES[id] = {
+                nome: logradouro,
+                lat: coords.lat,
+                lng: coords.lng,
+                utm: `${este} E, ${norte} N (${zona})`
+              };
+              bounds.extend([coords.lat, coords.lng]);
+              contador++;
+            }
+          }
+        }
+
+        inicializarMarcadoresEPopup();
+        if (contador > 0) {
+          map.fitBounds(bounds); // Ajusta o zoom para enquadrar todos os hidrantes do CSV
+        }
+
+      } catch (erro) {
+        console.warn("Aviso ao carregar CSV:", erro.message);
+        document.getElementById('status-conexao').innerHTML = '⚠️ CSV não localizado. Usando padrão.';
+      }
+    }
+
+    function inicializarMarcadoresEPopup() {
+      // Limpa seletores anteriores mantendo apenas a opção "TODOS"
+      selectFiltro.innerHTML = '<option value="TODOS">-- Todos os Hidrantes --</option>';
+
+      Object.keys(CADASTRO_HIDRANTES).forEach(id => {
+        // Preenche filtro do HTML
+        const opt = document.createElement('option');
+        opt.value = id; opt.textContent = id;
+        selectFiltro.appendChild(opt);
+
+        const info = CADASTRO_HIDRANTES[id];
+
+        // Cria ou atualiza marcadores do Leaflet
+        if (!marcadoresMapa[id]) {
+          const marker = L.marker([info.lat, info.lng], { icon: iconeCinza }).addTo(map);
+          marker.on('click', () => {
+            selectFiltro.value = id;
+            renderizarTabelaEAtualizarMapa();
+          });
+          marcadoresMapa[id] = marker;
+        } else {
+          marcadoresMapa[id].setLatLng([info.lat, info.lng]);
+        }
+
+        marcadoresMapa[id].bindPopup(`<b>${id}</b><br>${info.nome}<br><small>UTM: ${info.utm}</small><br>Aguardando dados...`);
       });
 
-      marker.bindPopup(`<b>${id}</b><br>${info.nome}<br>Aguardando dados...`);
-      marcadoresMapa[id] = marker;
-    });
+      renderizarTabelaEAtualizarMapa();
+    }
 
-    // 4. FUNÇÕES DE SUPORTE
+    // 6. FUNÇÕES AUXILIARES E EVENTOS DO MAPA
     function converterVoltsParaPorcentagem(volts) {
       if (!volts || volts <= 0) return 0;
       let pct = Math.round(((volts - 3.6) / (4.2 - 3.6)) * 100);
@@ -167,10 +248,8 @@
       return pct;
     }
 
-    // Clique do Botão no Popup
     window.reconhecerAlertaNoMapa = function(idHidrante) {
       const timestampAtual = Date.now();
-      
       database.ref(`status_operacional/${idHidrante}`).set({
         alerta_reconhecido: true,
         timestamp_reconhecimento: timestampAtual
@@ -181,7 +260,7 @@
       });
     };
 
-    // 5. PROCESSAMENTO E SINCRONIZAÇÃO
+    // 7. PROCESSAMENTO E SINCRONIZAÇÃO EM TEMPO REAL
     let historicoBruto = {};
     let statusOperacionalBruto = {};
 
@@ -196,7 +275,6 @@
       let listaEventosCompleta = [];
       let ultimosEventosPorHidrante = {};
 
-      // A) Varre o histórico e padroniza as chaves
       Object.keys(historicoBruto).forEach(chaveOriginal => {
         const idHidranteNormalizado = chaveOriginal.trim().toUpperCase();
         const registros = historicoBruto[chaveOriginal];
@@ -213,17 +291,15 @@
 
           listaEventosCompleta.push(item);
 
-          // Pega o item de maior timestamp para o estado do Mapa
           if (!ultimosEventosPorHidrante[idHidranteNormalizado] || item.timestamp > ultimosEventosPorHidrante[idHidranteNormalizado].timestamp) {
             ultimosEventosPorHidrante[idHidranteNormalizado] = item;
           }
         });
       });
 
-      // Ordena a tabela do evento mais recente ao mais antigo
       listaEventosCompleta.sort((a, b) => b.timestamp - a.timestamp);
 
-      // B) Renderiza a Tabela
+      // Renderização da tabela
       listaEventosCompleta.forEach(item => {
         if (filtroAtual !== "TODOS" && item.idHidrante !== filtroAtual) return;
 
@@ -251,7 +327,7 @@
         tabelaBody.appendChild(tr);
       });
 
-      // C) Lógica de Estado do Mapa
+      // Atualização dos marcadores no Mapa
       Object.keys(CADASTRO_HIDRANTES).forEach(idHidrante => {
         const cadastro = CADASTRO_HIDRANTES[idHidrante];
         const ultimoEvento = ultimosEventosPorHidrante[idHidrante];
@@ -271,23 +347,17 @@
           const tsReconhecimento = parseInt(opStatus.timestamp_reconhecimento || 0);
           const foiReconhecido = opStatus.alerta_reconhecido && (tsReconhecimento >= ultimoEvento.timestamp);
 
-          // Log de Diagnóstico no Console (F12)
-          console.log(`[MAPA CHECK] ${idHidrante}: Evento=${ultimoEvento.evento} | Rec=${foiReconhecido}`);
-
           if (tempoDecorrido > LIMITE_24H_MS) {
             statusMapaTexto = "OFFLINE (>24h)";
             iconeParaUsar = iconeCinza;
           } else if (ultimoEvento.evento === "ALERTA_MOVIMENTO" && !foiReconhecido) {
-            // ALERTA DE MOVIMENTO ATIVO
             statusMapaTexto = "<b style='color:#e74c3c;'>🚨 ALERTA DE MOVIMENTO</b>";
             iconeParaUsar = iconeVermelho;
             exibirBotaoLimpar = true;
           } else if (bateriaPctMapa < 30) {
-            // BATERIA BAIXA
             statusMapaTexto = "<b style='color:#e67e22;'>⚠️ BATERIA BAIXA</b>";
             iconeParaUsar = iconeLaranja;
           } else {
-            // NORMAL
             statusMapaTexto = "<b style='color:#2ecc71;'>NORMAL</b>";
             iconeParaUsar = iconeVerde;
           }
@@ -301,6 +371,7 @@
             <div style="min-width: 180px;">
               <h3 style="margin-bottom:5px; font-size:1rem;">${idHidrante}</h3>
               <p style="font-size:0.85rem; color:#555; margin-bottom:8px;">${cadastro.nome}</p>
+              <p style="font-size:0.75rem; color:#777; margin-bottom:8px;"><b>UTM:</b> ${cadastro.utm}</p>
               <hr style="margin-bottom:8px; border:0; border-top:1px solid #eee;">
               <b>Status:</b> ${statusMapaTexto}<br>
               <b>Último Sinal:</b> ${dataFormatadaMapa}<br>
@@ -316,13 +387,14 @@
           }
 
           htmlPopup += `</div>`;
-
           marker.setPopupContent(htmlPopup);
         }
       });
     }
 
-    // 6. LISTENERS DO FIREBASE
+    // 8. LISTENERS DO FIREBASE & CARREGAMENTO INICIAL
+    carregarHidrantesDoCSV();
+
     database.ref('status_operacional').on('value', (snapshot) => {
       statusOperacionalBruto = snapshot.val() || {};
       renderizarTabelaEAtualizarMapa();
