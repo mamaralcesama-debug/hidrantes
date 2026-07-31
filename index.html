@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel de Monitoramento de Hidrantes</title>
+  
+  <!-- Leaflet CSS (Mapa) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body { background-color: #f4f6f9; color: #333; display: flex; flex-direction: column; height: 100vh; }
+    
+    header { background-color: #1a252f; color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+    header h1 { font-size: 1.4rem; display: flex; align-items: center; gap: 10px; }
+    
+    .main-container { display: flex; flex: 1; overflow: hidden; }
+    
+    /* Container do Mapa */
+    #map { flex: 2; height: 100%; border-right: 2px solid #ddd; }
+    
+    /* Painel Lateral e Tabela */
+    .sidebar { flex: 1; display: flex; flex-direction: column; background: white; padding: 20px; overflow-y: auto; }
+    .sidebar h2 { font-size: 1.1rem; margin-bottom: 15px; color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 8px; }
+    
+    /* Tabela de Hidrantes */
+    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 0.85rem; }
+    th, td { text-align: left; padding: 10px 6px; border-bottom: 1px solid #eee; vertical-align: middle; }
+    th { background-color: #f8f9fa; color: #6c757d; font-weight: 600; }
+    
+    /* Badges de Status */
+    .badge { padding: 4px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: bold; color: white; display: inline-block; }
+    .badge-verde { background-color: #2ecc71; }
+    .badge-vermelho { background-color: #e74c3c; animation: pulse 1s infinite; }
+    .badge-cinza { background-color: #7f8c8d; }
+    
+    @keyframes pulse {
+      0% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.05); opacity: 0.8; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    /* Botão de Limpeza */
+    .btn-ack {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 6px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.75rem;
+      font-weight: bold;
+      transition: background 0.2s;
+    }
+    .btn-ack:hover { background-color: #2980b9; }
+    .btn-ack:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>🚨 Central de Monitoramento de Hidrantes</h1>
+    <div id="status-conexao">Conectando ao Firebase...</div>
+  </header>
+
+  <div class="main-container">
+    <!-- Mapa Interativo -->
+    <div id="map"></div>
+
+    <!-- Painel de Detalhes -->
+    <div class="sidebar">
+      <h2>Status dos Hidrantes Cadastrados</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Última Com.</th>
+            <th>Bat.</th>
+            <th>Status</th>
+            <th>Ação</th>
+          </tr>
+        </thead>
+        <tbody id="tabela-hidrantes">
+          <!-- Linhas inseridas via JS -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Scripts: Firebase & Leaflet Map -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+  <script>
+    // =========================================================================
+    // 1. CADASTRO FIXO DE COORDENADAS DOS HIDRANTES
+    // =========================================================================
+    const CADASTRO_HIDRANTES = {
+      "HIDRANTE-001": { nome: "Hidrante Bloco A (Entrada)", lat: -21.7642, lng: -43.3503 },
+      "HIDRANTE-002": { nome: "Hidrante Bloco B (Garagem)", lat: -21.7650, lng: -43.3510 },
+      "HIDRANTE-003": { nome: "Hidrante Reservatório Central", lat: -21.7635, lng: -43.3495 }
+    };
+
+    // =========================================================================
+    // 2. CONFIGURAÇÃO DO FIREBASE
+    // =========================================================================
+    const firebaseConfig = {
+      databaseURL: "https://tampashidrantes-default-rtdb.firebaseio.com"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+
+    // =========================================================================
+    // 3. MAPA LEAFLET E ÍCONES
+    // =========================================================================
+    const map = L.map('map').setView([-21.7642, -43.3503], 16);
+    
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    const marcadoresMapa = {};
+    const audioAlerta = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
+
+    const iconeVerde = new L.Icon({
+      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+      iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
+    });
+
+    const iconeVermelho = new L.Icon({
+      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+      iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
+    });
+
+    const iconeCinza = new L.Icon({
+      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-grey.png',
+      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+      iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
+    });
+
+    // Criar marcadores no mapa
+    Object.keys(CADASTRO_HIDRANTES).forEach(id => {
+      const info = CADASTRO_HIDRANTES[id];
+      const marker = L.marker([info.lat, info.lng], { icon: iconeCinza }).addTo(map);
+      marker.bindPopup(`<b>${id}</b><br>${info.nome}<br>Carregando...`);
+      marcadoresMapa[id] = marker;
+    });
+
+    // =========================================================================
+    // 4. LÓGICA DE RECONHECIMENTO DE ALERTA (CLEAR ALERT)
+    // =========================================================================
+    function limparAlerta(idHidrante) {
+      if (confirm(`Confirmar verificação física no ${idHidrante}? O alerta será baixado.`)) {
+        database.ref('status_operacional/' + idHidrante).set({
+          alerta_reconhecido: true,
+          timestamp_reconhecimento: firebase.database.ServerValue.TIMESTAMP
+        }).then(() => {
+          alert(`Alerta do ${idHidrante} foi limpo com sucesso!`);
+        });
+      }
+    }
+
+    // =========================================================================
+    // 5. PROCESSAMENTO EM TEMPO REAL COM ATENDIMENTO
+    // =========================================================================
+    let historicoDados = {};
+    let statusOperacionalDados = {};
+
+    function atualizarInterface() {
+      const tabelaBody = document.getElementById('tabela-hidrantes');
+      tabelaBody.innerHTML = '';
+
+      const agora = Date.now();
+      const LIMITE_24H_MS = 24 * 60 * 60 * 1000;
+
+      Object.keys(CADASTRO_HIDRANTES).forEach(idHidrante => {
+        const cadastro = CADASTRO_HIDRANTES[idHidrante];
+        const historicoHidrante = historicoDados[idHidrante];
+        const operacional = statusOperacionalDados[idHidrante] || {};
+
+        let dataFormatada = "Nunca";
+        let tensaoBat = "--";
+        let statusFinal = "OFFLINE";
+        let iconeParaUsar = iconeCinza;
+        let ehAlertaPendente = false;
+
+        if (historicoHidrante) {
+          const chaves = Object.keys(historicoHidrante);
+          const ultimaChave = chaves[chaves.length - 1];
+          const ultimoEvento = historicoHidrante[ultimaChave];
+
+          const timestampEvento = ultimoEvento.timestamp_servidor || 0;
+          const tempoDecorrido = agora - timestampEvento;
+          
+          dataFormatada = new Date(timestampEvento).toLocaleString('pt-BR');
+          tensaoBat = ultimoEvento.bateria_volts ? ultimoEvento.bateria_volts.toFixed(2) + "V" : "--";
+
+          // Verifica se o evento foi um alerta e se ainda NÃO foi limpo pela equipe
+          const tsReconhecimento = operacional.timestamp_reconhecimento || 0;
+          
+          if (tempoDecorrido > LIMITE_24H_MS) {
+            statusFinal = "OFFLINE";
+            iconeParaUsar = iconeCinza;
+          } else if (ultimoEvento.evento === "ALERTA_MOVIMENTO" && tsReconhecimento < timestampEvento) {
+            statusFinal = "ALERTA";
+            iconeParaUsar = iconeVermelho;
+            ehAlertaPendente = true;
+            audioAlerta.play().catch(() => {});
+          } else {
+            statusFinal = "NORMAL";
+            iconeParaUsar = iconeVerde;
+          }
+        }
+
+        // 1. Atualiza Marcador no Mapa
+        if (marcadoresMapa[idHidrante]) {
+          marcadoresMapa[idHidrante].setIcon(iconeParaUsar);
+          
+          let botaoPopup = ehAlertaPendente ? 
+            `<br><br><button onclick="limparAlerta('${idHidrante}')" class="btn-ack">✅ Limpar Alerta</button>` : '';
+
+          marcadoresMapa[idHidrante].setPopupContent(`
+            <b>${idHidrante}</b> - ${cadastro.nome}<br>
+            <b>Status:</b> ${statusFinal}<br>
+            <b>Última Leitura:</b> ${dataFormatada}<br>
+            <b>Bateria:</b> ${tensaoBat}${botaoPopup}
+          `);
+        }
+
+        // 2. Atualiza Linha da Tabela
+        let classBadge = "badge-cinza";
+        if (statusFinal === "NORMAL") classBadge = "badge-verde";
+        if (statusFinal === "ALERTA") classBadge = "badge-vermelho";
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><b>${idHidrante}</b></td>
+          <td>${dataFormatada}</td>
+          <td>${tensaoBat}</td>
+          <td><span class="badge ${classBadge}">${statusFinal}</span></td>
+          <td>
+            <button class="btn-ack" onclick="limparAlerta('${idHidrante}')" ${!ehAlertaPendente ? 'disabled' : ''}>
+              Limpar
+            </button>
+          </td>
+        `;
+        tabelaBody.appendChild(tr);
+      });
+    }
+
+    // Escutando os dois nós do banco em tempo real
+    database.ref('historico_hidrantes').on('value', (snapshot) => {
+      document.getElementById('status-conexao').innerHTML = '🟢 Conectado em Tempo Real';
+      historicoDados = snapshot.val() || {};
+      atualizarInterface();
+    });
+
+    database.ref('status_operacional').on('value', (snapshot) => {
+      statusOperacionalDados = snapshot.val() || {};
+      atualizarInterface();
+    });
+  </script>
+</body>
+</html>
