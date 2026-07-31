@@ -36,6 +36,10 @@
     th { position: sticky; top: 0; background-color: #f8f9fa; color: #4a5568; font-weight: 600; text-align: left; padding: 10px 8px; border-bottom: 2px solid #e2e8f0; z-index: 10; }
     td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #edf2f7; vertical-align: middle; }
     
+    /* Efeito de interatividade na tabela para indicar que é clicável */
+    tbody tr { cursor: pointer; transition: background-color 0.15s ease; }
+    tbody tr:hover { background-color: #f1f5f9; }
+
     /* Badges de Status */
     .badge { padding: 4px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: bold; color: white; display: inline-block; white-space: nowrap; }
     .badge-verde { background-color: #2ecc71; }
@@ -159,7 +163,6 @@
     // 5. CARREGAMENTO DO CSV HOSPEDADO NO GITHUB PAGES
     async function carregarHidrantesDoCSV() {
       try {
-        // Busca o arquivo hidrantes.csv no repositório com nocache para garantir a versão atual
         const resposta = await fetch('hidrantes.csv?v=' + new Date().getTime());
         if (!resposta.ok) throw new Error("Arquivo CSV não encontrado no GitHub.");
 
@@ -170,7 +173,6 @@
         let bounds = L.latLngBounds();
         let contador = 0;
 
-        // Processa linhas ignorando o cabeçalho (i = 1)
         for (let i = 1; i < linhas.length; i++) {
           const linha = linhas[i].trim();
           if (!linha) continue;
@@ -200,7 +202,7 @@
 
         inicializarMarcadoresEPopup();
         if (contador > 0) {
-          map.fitBounds(bounds); // Ajusta o zoom para enquadrar todos os hidrantes do CSV
+          map.fitBounds(bounds);
         }
 
       } catch (erro) {
@@ -210,18 +212,15 @@
     }
 
     function inicializarMarcadoresEPopup() {
-      // Limpa seletores anteriores mantendo apenas a opção "TODOS"
       selectFiltro.innerHTML = '<option value="TODOS">-- Todos os Hidrantes --</option>';
 
       Object.keys(CADASTRO_HIDRANTES).forEach(id => {
-        // Preenche filtro do HTML
         const opt = document.createElement('option');
         opt.value = id; opt.textContent = id;
         selectFiltro.appendChild(opt);
 
         const info = CADASTRO_HIDRANTES[id];
 
-        // Cria ou atualiza marcadores do Leaflet
         if (!marcadoresMapa[id]) {
           const marker = L.marker([info.lat, info.lng], { icon: iconeCinza }).addTo(map);
           marker.on('click', () => {
@@ -239,7 +238,22 @@
       renderizarTabelaEAtualizarMapa();
     }
 
-    // 6. FUNÇÕES AUXILIARES E EVENTOS DO MAPA
+    // 6. FUNÇÃO DE CENTRALIZAR E DAR ZOOM MAXIMO AO CLICAR NA TABELA
+    window.focarHidranteNoMapa = function(idHidrante) {
+      const hidrante = CADASTRO_HIDRANTES[idHidrante];
+      if (hidrante && marcadoresMapa[idHidrante]) {
+        // Suave transição até a localização com Zoom Máximo (nível 18)
+        map.flyTo([hidrante.lat, hidrante.lng], 18, {
+          animate: true,
+          duration: 1.2
+        });
+        
+        // Abre o popup do marcador
+        marcadoresMapa[idHidrante].openPopup();
+      }
+    };
+
+    // 7. FUNÇÕES AUXILIARES E EVENTOS DO MAPA
     function converterVoltsParaPorcentagem(volts) {
       if (!volts || volts <= 0) return 0;
       let pct = Math.round(((volts - 3.6) / (4.2 - 3.6)) * 100);
@@ -260,7 +274,7 @@
       });
     };
 
-    // 7. PROCESSAMENTO E SINCRONIZAÇÃO EM TEMPO REAL
+    // 8. PROCESSAMENTO E SINCRONIZAÇÃO EM TEMPO REAL
     let historicoBruto = {};
     let statusOperacionalBruto = {};
 
@@ -318,6 +332,10 @@
         }
 
         const tr = document.createElement('tr');
+        // Evento de clique adicionado na linha inteira para disparar a função de zoom
+        tr.setAttribute('onclick', `focarHidranteNoMapa('${item.idHidrante}')`);
+        tr.title = `Clique para focar o ${item.idHidrante} no mapa`;
+        
         tr.innerHTML = `
           <td>${dataFormatada}</td>
           <td><b>${item.idHidrante}</b></td>
@@ -392,7 +410,7 @@
       });
     }
 
-    // 8. LISTENERS DO FIREBASE & CARREGAMENTO INICIAL
+    // 9. LISTENERS DO FIREBASE & CARREGAMENTO INICIAL
     carregarHidrantesDoCSV();
 
     database.ref('status_operacional').on('value', (snapshot) => {
