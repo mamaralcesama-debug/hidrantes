@@ -40,20 +40,23 @@
     .badge-laranja { background-color: #e67e22; }
     .badge-cinza { background-color: #7f8c8d; }
     
-    /* Botão no Popup do Mapa */
+    /* Botão Dentro do Popup do Leaflet */
     .btn-reconhecer {
-      display: inline-block;
-      margin-top: 8px;
-      padding: 6px 12px;
-      background-color: #3498db;
+      display: block;
+      width: 100%;
+      margin-top: 10px;
+      padding: 8px 12px;
+      background-color: #e74c3c;
       color: white;
       border: none;
       border-radius: 4px;
       cursor: pointer;
       font-size: 0.8rem;
       font-weight: bold;
+      text-align: center;
+      transition: background 0.2s;
     }
-    .btn-reconhecer:hover { background-color: #2980b9; }
+    .btn-reconhecer:hover { background-color: #c0392b; }
 
     @keyframes pulse {
       0% { transform: scale(1); opacity: 1; }
@@ -105,21 +108,21 @@
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 
   <script>
-    // 1. CADASTRO DE HIDRANTES
+    // 1. CADASTRO FIXO DOS HIDRANTES
     const CADASTRO_HIDRANTES = {
       "HIDRANTE-001": { nome: "Hidrante Bloco A (Entrada)", lat: -21.7642, lng: -43.3503 },
       "HIDRANTE-002": { nome: "Hidrante Bloco B (Garagem)", lat: -21.7650, lng: -43.3510 },
       "HIDRANTE-003": { nome: "Hidrante Reservatório Central", lat: -21.7635, lng: -43.3495 }
     };
 
-    // 2. FIREBASE CONFIG
+    // 2. CONFIGURAÇÃO DO FIREBASE
     const firebaseConfig = {
       databaseURL: "https://tampashidrantes-default-rtdb.firebaseio.com"
     };
     firebase.initializeApp(firebaseConfig);
     const database = firebase.database();
 
-    // 3. MAPA & ÍCONES
+    // 3. INICIALIZAÇÃO DO MAPA
     const map = L.map('map').setView([-21.7642, -43.3503], 16);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
@@ -155,7 +158,7 @@
       marcadoresMapa[id] = marker;
     });
 
-    // 4. FUNÇÕES AUXILIARES
+    // 4. FUNÇÕES DE SUPORTE
     
     // Converte Volts em Porcentagem (3.6V = 0% | 4.2V = 100%)
     function converterVoltsParaPorcentagem(volts) {
@@ -166,17 +169,22 @@
       return pct;
     }
 
-    // Reconhecer alerta direto do Popup do Mapa
+    // Função invocada ao clicar no botão dentro do Popup
     window.reconhecerAlertaNoMapa = function(idHidrante) {
+      const timestampAtual = Date.now();
+      
       database.ref(`status_operacional/${idHidrante}`).set({
         alerta_reconhecido: true,
-        data_reconhecimento: firebase.database.ServerValue.TIMESTAMP
+        timestamp_reconhecimento: timestampAtual
       }).then(() => {
-        alert(`Alerta do ${idHidrante} reconhecido com sucesso!`);
+        // Força a re-renderização para atualizar a cor do ícone no mapa
+        renderizarTabelaEAtualizarMapa();
+      }).catch(err => {
+        console.error("Erro ao reconhecer alerta:", err);
       });
     };
 
-    // 5. PROCESSAMENTO DE DADOS
+    // 5. PROCESSAMENTO E SINCRONIZAÇÃO
     let historicoBruto = {};
     let statusOperacionalBruto = {};
 
@@ -191,7 +199,7 @@
       let listaEventosCompleta = [];
       let ultimosEventosPorHidrante = {};
 
-      // A) Transforma histórico em Array e localiza os mais recentes
+      // A) Varre o histórico e pega o evento mais recente de cada hidrante
       Object.keys(historicoBruto).forEach(idHidrante => {
         const registros = historicoBruto[idHidrante];
         if (!registros) return;
@@ -213,9 +221,10 @@
         });
       });
 
+      // Ordena a tabela em ordem cronológica decrescente
       listaEventosCompleta.sort((a, b) => b.timestamp - a.timestamp);
 
-      // B) Renderiza Tabela
+      // B) Renderiza a Tabela
       listaEventosCompleta.forEach(item => {
         if (filtroAtual !== "TODOS" && item.idHidrante !== filtroAtual) return;
 
@@ -243,7 +252,7 @@
         tabelaBody.appendChild(tr);
       });
 
-      // C) Atualiza o Mapa
+      // C) Lógica de Estado do Mapa
       Object.keys(CADASTRO_HIDRANTES).forEach(idHidrante => {
         const cadastro = CADASTRO_HIDRANTES[idHidrante];
         const ultimoEvento = ultimosEventosPorHidrante[idHidrante];
@@ -260,46 +269,59 @@
           dataFormatadaMapa = new Date(ultimoEvento.timestamp).toLocaleString('pt-BR');
           bateriaPctMapa = converterVoltsParaPorcentagem(ultimoEvento.bateria_volts);
 
-          // Checa se o último alerta já foi reconhecido pelo usuário
-          const foiReconhecido = opStatus.alerta_reconhecido === true;
+          // Verifica se o último alerta de movimento foi registrado DEPOIS do último clique de reconhecimento
+          const tsReconhecimento = opStatus.timestamp_reconhecimento || 0;
+          const foiReconhecido = opStatus.alerta_reconhecido && (tsReconhecimento > ultimoEvento.timestamp);
 
           if (tempoDecorrido > LIMITE_24H_MS) {
             statusMapaTexto = "OFFLINE (>24h)";
             iconeParaUsar = iconeCinza;
           } else if (ultimoEvento.evento === "ALERTA_MOVIMENTO" && !foiReconhecido) {
-            statusMapaTexto = "🚨 ALERTA DE MOVIMENTO";
+            // ALERTA ATIVO E NÃO RECONHECIDO -> VERMELHO
+            statusMapaTexto = "<b style='color:#e74c3c;'>🚨 ALERTA DE MOVIMENTO</b>";
             iconeParaUsar = iconeVermelho;
             exibirBotaoLimpar = true;
-            audioAlerta.play().catch(() => {});
           } else if (bateriaPctMapa < 30) {
-            statusMapaTexto = "⚠️ BATERIA BAIXA";
+            // BATERIA BAIXA -> LARANJA
+            statusMapaTexto = "<b style='color:#e67e22;'>⚠️ BATERIA BAIXA</b>";
             iconeParaUsar = iconeLaranja;
           } else {
-            statusMapaTexto = "NORMAL";
+            // NORMAL -> VERDE
+            statusMapaTexto = "<b style='color:#2ecc71;'>NORMAL</b>";
             iconeParaUsar = iconeVerde;
           }
         }
 
         if (marcadoresMapa[idHidrante]) {
-          marcadoresMapa[idHidrante].setIcon(iconeParaUsar);
+          const marker = marcadoresMapa[idHidrante];
+          marker.setIcon(iconeParaUsar);
           
           let htmlPopup = `
-            <b>${idHidrante}</b> - ${cadastro.nome}<br>
-            <b>Status:</b> ${statusMapaTexto}<br>
-            <b>Último Sinal:</b> ${dataFormatadaMapa}<br>
-            <b>Bateria:</b> ${bateriaPctMapa}%
+            <div style="min-width: 180px;">
+              <h3 style="margin-bottom:5px; font-size:1rem;">${idHidrante}</h3>
+              <p style="font-size:0.85rem; color:#555; margin-bottom:8px;">${cadastro.nome}</p>
+              <hr style="margin-bottom:8px; border:0; border-top:1px solid #eee;">
+              <b>Status:</b> ${statusMapaTexto}<br>
+              <b>Último Sinal:</b> ${dataFormatadaMapa}<br>
+              <b>Bateria:</b> ${bateriaPctMapa}%
           `;
 
           if (exibirBotaoLimpar) {
-            htmlPopup += `<br><button class="btn-reconhecer" onclick="reconhecerAlertaNoMapa('${idHidrante}')">✔ Reconhecer Alerta</button>`;
+            htmlPopup += `
+              <button class="btn-reconhecer" onclick="reconhecerAlertaNoMapa('${idHidrante}')">
+                ✔ Reconhecer Alerta
+              </button>
+            `;
           }
 
-          marcadoresMapa[idHidrante].setPopupContent(htmlPopup);
+          htmlPopup += `</div>`;
+
+          marker.setPopupContent(htmlPopup);
         }
       });
     }
 
-    // 6. LISTENERS EM TEMPO REAL
+    // 6. OBSERVADORES DO FIREBASE EM TEMPO REAL
     database.ref('status_operacional').on('value', (snapshot) => {
       statusOperacionalBruto = snapshot.val() || {};
       renderizarTabelaEAtualizarMapa();
