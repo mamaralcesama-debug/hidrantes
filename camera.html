@@ -3,191 +3,264 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Câmera de Monitoramento - Hidrante</title>
+  <title>Câmera de Monitoramento - Tampa Hidrante</title>
   <style>
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
     }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background-color: #000;
-      color: #fff;
+      background-color: #0f172a;
+      color: #f8fafc;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      justify-content: space-between;
       min-height: 100vh;
       padding: 16px;
     }
-    .container {
+
+    header {
+      text-align: center;
+      width: 100%;
+      margin-bottom: 12px;
+    }
+
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #38bdf8;
+    }
+
+    .hidrante-badge {
+      display: inline-block;
+      margin-top: 4px;
+      padding: 4px 12px;
+      background-color: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 9999px;
+      font-size: 0.875rem;
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+
+    .video-container {
+      position: relative;
       width: 100%;
       max-width: 480px;
+      aspect-ratio: 4 / 3;
+      background-color: #000000;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+      border: 1px solid #334155;
       display: flex;
-      flex-direction: column;
       align-items: center;
-      gap: 16px;
+      justify-content: center;
     }
-    .header {
-      text-align: center;
-    }
-    .header h1 {
-      font-size: 1.2rem;
-      color: #38ef7d;
-      margin-bottom: 4px;
-    }
-    .header p {
-      font-size: 0.85rem;
-      color: #aaa;
-    }
+
     video {
       width: 100%;
-      border-radius: 12px;
-      background-color: #111;
-      border: 1px solid #333;
+      height: 100%;
+      object-fit: cover;
     }
-    .status-box {
+
+    .status-card {
       width: 100%;
-      padding: 12px;
-      border-radius: 8px;
-      background-color: #1a1a1a;
-      border: 1px solid #333;
-      font-size: 0.85rem;
+      max-width: 480px;
+      background-color: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 16px;
+      margin-top: 16px;
       text-align: center;
+    }
+
+    .status-card p {
+      font-size: 0.95rem;
       line-height: 1.4;
+      font-weight: 500;
     }
-    .status-box span {
-      font-weight: bold;
+
+    .status-ok { color: #4ade80; }
+    .status-working { color: #fbbf24; }
+    .status-error { color: #f87171; }
+
+    footer {
+      font-size: 0.75rem;
+      color: #64748b;
+      margin-top: 24px;
+      text-align: center;
     }
-    .status-ok { color: #38ef7d; }
-    .status-working { color: #f1c40f; }
-    .status-error { color: #e74c3c; }
-    
-    /* Canvas ocultos usados para captura de imagem */
+
+    /* Canvas ocultos usados para processamento das fotos */
     canvas {
       display: none;
     }
   </style>
+</head>
+<body>
 
-  <!-- SDKs do Firebase (Modular v9/v10 via CDN) -->
+  <header>
+    <h1>Câmera de Monitoramento</h1>
+    <div class="hidrante-badge" id="hidranteLabel">HIDRANTE_001</div>
+  </header>
+
+  <main class="video-container">
+    <video id="video" autoplay playsinline muted></video>
+  </main>
+
+  <div class="status-card">
+    <p id="statusTxt" class="status-working">⏳ Conectando à câmera...</p>
+  </div>
+
+  <footer>
+    Mantenha este navegador aberto e com a tela ligada no celular.
+  </footer>
+
+  <!-- Canvas auxiliares em memória -->
+  <canvas id="canvasThumb"></canvas>
+  <canvas id="canvasFull"></canvas>
+
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-    import { getDatabase, ref, onValue, set, limitToLast, query } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+    import { getDatabase, ref, onChildAdded, update, query, limitToLast } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
-    // ------------------------------------------------------------------
-    // CONFIGURAÇÃO DO SEU FIREBASE
-    // Substitua os dados abaixo com as credenciais do seu console Firebase
-    // ------------------------------------------------------------------
+    // -------------------------------------------------------------
+    // CONFIGURAÇÃO DO SEU FIREBASE COM AS SUAS CREDENCIAIS
+    // -------------------------------------------------------------
     const firebaseConfig = {
-      apiKey: "SEU_API_KEY",
-      authDomain: "SEU_PROJECT_ID.firebaseapp.com",
-      databaseURL: "https://SEU_PROJECT_ID-default-rtdb.firebaseio.com",
-      projectId: "SEU_PROJECT_ID",
-      storageBucket: "SEU_PROJECT_ID.appspot.com",
-      messagingSenderId: "SEU_SENDER_ID",
-      appId: "SEU_APP_ID"
+      apiKey: "uS8i8Q1dBAPRIsTzVJNjh628sFKoJc9vksohMvU4",
+      databaseURL: "https://tampashidrantes-default-rtdb.firebaseio.com",
+      projectId: "tampashidrantes"
     };
 
-    // Inicializa Firebase
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
-    // Identifica qual hidrante este celular está monitorando via URL (Ex: ?hidrante=001)
+    // Trata o parâmetro ?hidrante= da URL (ex: 001, hidrante_001, HIDRANTE_001)
     const urlParams = new URLSearchParams(window.location.search);
-    const hidranteId = urlParams.get('hidrante') || '001';
+    let hidranteParam = (urlParams.get('hidrante') || 'HIDRANTE_001').toUpperCase().trim();
+    if (!hidranteParam.startsWith('HIDRANTE_')) {
+      hidranteParam = 'HIDRANTE_' + hidranteParam;
+    }
+    const idHidrante = hidranteParam;
 
-    // Elementos da Interface
+    // Referências do DOM
     const video = document.getElementById('video');
     const canvasThumb = document.getElementById('canvasThumb');
     const canvasFull = document.getElementById('canvasFull');
     const statusTxt = document.getElementById('statusTxt');
     const hidranteLabel = document.getElementById('hidranteLabel');
 
-    hidranteLabel.textContent = hidranteId;
+    hidranteLabel.textContent = idHidrante;
 
-    // 1. Inicializa a Câmera Traseira do Celular
+    // 1. Inicializa a câmera do celular
     async function initCamera() {
       try {
+        // Tenta abrir preferencialmente a câmera traseira
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: { exact: "environment" } },
           audio: false
         });
         video.srcObject = stream;
-        updateStatus("Câmera ativa. Aguardando disparos de movimento...", "status-ok");
+        updateStatus("🟢 Câmera ativa (Traseira). Aguardando sinal do ESP32...", "status-ok");
       } catch (err) {
-        // Fallback caso não encontre a câmera traseira exata (ex: em desktop para testes)
         try {
+          // Se falhar (ex: rodando no notebook/PC), tenta qualquer câmera disponível
           const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
           video.srcObject = stream;
-          updateStatus("Câmera ativa (Frontal/Padrão).", "status-ok");
+          updateStatus("🟢 Câmera ativa. Aguardando sinal do ESP32...", "status-ok");
         } catch (e) {
-          updateStatus("Erro ao acessar câmera: " + e.message, "status-error");
+          updateStatus("🔴 Erro ao acessar a câmera: " + e.message, "status-error");
         }
       }
     }
 
-    // 2. Escuta Eventos do Firebase para Capturar Foto
+    // 2. Escuta os eventos no Firebase
     function listenForEvents() {
-      // Escuta apenas o último evento registrado no nó do hidrante específico
-      const eventosRef = query(ref(db, `hidrantes/${hidranteId}/eventos`), limitToLast(1));
+      // Monitora apenas o último evento registrado no histórico do hidrante ativo
+      const historicoRef = query(ref(db, `historico_hidrantes/${idHidrante}`), limitToLast(1));
 
-      onValue(eventosRef, (snapshot) => {
-        if (!snapshot.exists()) return;
+      onChildAdded(historicoRef, (snapshot) => {
+        const eventKey = snapshot.key;
+        const evento = snapshot.val();
 
-        snapshot.forEach((childSnapshot) => {
-          const key = childSnapshot.key;
-          const evento = childSnapshot.val();
+        // Dispara a foto se for um ALERTA_MOVIMENTO que ainda não possui miniatura
+        if (evento && evento.evento === 'ALERTA_MOVIMENTO' && !evento.thumb_base64) {
+          capturarEEnviarFoto(eventKey);
+        }
+      });
 
-          // Verifica se o evento exige captura e ainda não foi processado pela câmera
-          if (evento.status === 'pendente_foto') {
-            capturarEEnviarFotos(key);
-          }
-        });
+      // Monitora pedidos de foto HD iniciados pelo painel (index.html)
+      const solicitacoesRef = query(ref(db, 'solicitacoes_foto'), limitToLast(1));
+      onChildAdded(solicitacoesRef, (snapshot) => {
+        const pedido = snapshot.val();
+        if (pedido && pedido.idHidrante === idHidrante && !pedido.atendido) {
+          enviarFotoFullSolicitada(pedido.evento_id, snapshot.key);
+        }
       });
     }
 
-    // 3. Processa a Captura de Foto (Thumb + Full)
-    async function capturarEEnviarFotos(eventKey) {
-      updateStatus("Movimento detectado! Processando foto...", "status-working");
+    // 3. Captura Thumbnail e envia ao Firebase
+    async function capturarEEnviarFoto(eventKey) {
+      updateStatus("📸 Movimento detectado! Capturando foto...", "status-working");
 
       if (!video.videoWidth) {
-        updateStatus("Erro: Câmera não está pronta.", "status-error");
+        updateStatus("⚠️ Vídeo ainda não está pronto para captura.", "status-error");
         return;
       }
 
-      // --- A. GERAÇÃO DA THUMBNAIL LEVE (Compacta para economizar Firebase) ---
+      // Renderiza foto compacta para thumbnail (160px de largura, compactada em JPEG ~3KB)
       const ctxThumb = canvasThumb.getContext('2d');
-      // Reduz drasticamente a resolução para a Thumbnail (ex: 160px de largura)
       const thumbWidth = 160;
       const thumbHeight = (video.videoHeight / video.videoWidth) * thumbWidth;
       canvasThumb.width = thumbWidth;
       canvasThumb.height = thumbHeight;
       ctxThumb.drawImage(video, 0, 0, thumbWidth, thumbHeight);
       
-      // Qualidade JPEG 0.5 gera imagem Base64 de ~3KB a 5KB
       const thumbBase64 = canvasThumb.toDataURL('image/jpeg', 0.5);
 
-      // --- B. GERAÇÃO DA FOTO EM ALTA RESOLUÇÃO (Para visualização detalhada) ---
+      try {
+        // Grava no nó do evento que o ESP32 acabou de criar
+        await update(ref(db, `historico_hidrantes/${idHidrante}/${eventKey}`), {
+          thumb_base64: thumbBase64
+        });
+
+        updateStatus("🟢 Foto gravada com sucesso no histórico!", "status-ok");
+      } catch (err) {
+        updateStatus("🔴 Erro ao salvar foto no Firebase: " + err.message, "status-error");
+      }
+    }
+
+    // 4. Captura foto em Alta Resolução sob demanda
+    async function enviarFotoFullSolicitada(eventKey, reqKey) {
+      updateStatus("📡 Solicitada foto em alta resolução! Enviando...", "status-working");
+
       const ctxFull = canvasFull.getContext('2d');
       canvasFull.width = video.videoWidth;
       canvasFull.height = video.videoHeight;
       ctxFull.drawImage(video, 0, 0);
       
-      // Qualidade JPEG 0.85
       const fotoFullBase64 = canvasFull.toDataURL('image/jpeg', 0.85);
 
       try {
-        // Atualiza a Thumbnail e o status do evento
-        await set(ref(db, `hidrantes/${hidranteId}/eventos/${eventKey}/thumbnail`), thumbBase64);
-        await set(ref(db, `hidrantes/${hidranteId}/eventos/${eventKey}/status`), 'foto_capturada');
+        // Anexa a foto em HD no evento correspondente
+        await update(ref(db, `historico_hidrantes/${idHidrante}/${eventKey}`), {
+          foto_full: fotoFullBase64
+        });
 
-        // Salva a Foto Full em um nó separado (só baixada sob demanda quando clicada no painel)
-        await set(ref(db, `hidrantes/${hidranteId}/fotos_full/${eventKey}`), fotoFullBase64);
+        // Finaliza o pedido de requisição
+        await update(ref(db, `solicitacoes_foto/${reqKey}`), {
+          atendido: true
+        });
 
-        updateStatus("Foto capturada e enviada com sucesso!", "status-ok");
+        updateStatus("🟢 Foto HD enviada com sucesso!", "status-ok");
       } catch (err) {
-        updateStatus("Erro ao salvar no Firebase: " + err.message, "status-error");
+        updateStatus("🔴 Erro ao enviar foto HD: " + err.message, "status-error");
       }
     }
 
@@ -200,26 +273,5 @@
     initCamera();
     listenForEvents();
   </script>
-</head>
-<body>
-
-  <div class="container">
-    <div class="header">
-      <h1>Monitoramento do Hidrante</h1>
-      <p>ID do Dispositivo: <strong id="hidranteLabel">001</strong></p>
-    </div>
-
-    <!-- Feedback visual do vídeo em tempo real -->
-    <video id="video" autoplay playsinline muted></video>
-
-    <div class="status-box">
-      Status: <span id="statusTxt" class="status-working">Inicializando câmera...</span>
-    </div>
-  </div>
-
-  <!-- Canvases ocultos usados para gerar as imagens base64 -->
-  <canvas id="canvasThumb"></canvas>
-  <canvas id="canvasFull"></canvas>
-
 </body>
 </html>
