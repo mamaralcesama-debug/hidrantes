@@ -1,184 +1,226 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Câmera de Monitoramento - Tampa Hidrante</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: monospace;
-      background-color: #0f172a;
-      color: #f8fafc;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      min-height: 100vh;
-      padding: 12px;
-    }
-    header { text-align: center; width: 100%; margin-bottom: 8px; }
-    h1 { font-size: 1.1rem; color: #38bdf8; }
-    .hidrante-badge {
-      display: inline-block;
-      margin-top: 2px;
-      padding: 2px 8px;
-      background-color: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 9999px;
-      font-size: 0.8rem;
-      font-weight: bold;
-    }
-    .video-container {
-      width: 100%;
-      max-width: 360px;
-      aspect-ratio: 4 / 3;
-      background-color: #000;
-      border-radius: 8px;
-      overflow: hidden;
-      border: 1px solid #334155;
-    }
-    video { width: 100%; height: 100%; object-fit: cover; }
-    
-    #logBox {
-      width: 100%;
-      max-width: 360px;
-      height: 220px;
-      background-color: #020617;
-      border: 1px solid #334155;
-      border-radius: 8px;
-      margin-top: 10px;
-      padding: 8px;
-      font-size: 0.75rem;
-      overflow-y: auto;
-      color: #38bdf8;
-    }
-    .log-err { color: #f87171; }
-    .log-ok { color: #4ade80; }
-    .log-warn { color: #fbbf24; }
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+  import { getDatabase, ref, update, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
-    canvas { display: none; }
-  </style>
-</head>
-<body>
+  const firebaseConfig = {
+    apiKey: "uS8i8Q1dBAPRIsTzVJNjh628sFKoJc9vksohMvU4",
+    databaseURL: "https://tampashidrantes-default-rtdb.firebaseio.com",
+    projectId: "tampashidrantes"
+  };
 
-  <header>
-    <h1>Câmera Autônoma</h1>
-    <div class="hidrante-badge" id="hidranteLabel">HIDRANTE-001</div>
-  </header>
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
 
-  <main class="video-container">
-    <video id="video" autoplay playsinline muted></video>
-  </main>
+  const video = document.getElementById('video');
+  const canvasThumb = document.getElementById('canvasThumb');
+  const logBox = document.getElementById('logBox');
 
-  <div id="logBox">⚡ Inicializando sistema de escuta...<br></div>
+  // Canvas auxiliar para foto HD em background
+  const canvasHD = document.createElement('canvas');
 
-  <canvas id="canvasThumb"></canvas>
+  let ultimoCaminhoEvento = null;
 
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-    import { getDatabase, ref, update, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+  function log(msg, tipo = '') {
+    const hora = new Date().toLocaleTimeString();
+    let classe = '';
+    if (tipo === 'ok') classe = 'log-ok';
+    if (tipo === 'err') classe = 'log-err';
+    if (tipo === 'warn') classe = 'log-warn';
+    logBox.innerHTML += `<div class="${classe}">[${hora}] ${msg}</div>`;
+    logBox.scrollTop = logBox.scrollHeight;
+  }
 
-    const firebaseConfig = {
-      apiKey: "uS8i8Q1dBAPRIsTzVJNjh628sFKoJc9vksohMvU4",
-      databaseURL: "https://tampashidrantes-default-rtdb.firebaseio.com",
-      projectId: "tampashidrantes"
-    };
-
-    const app = initializeApp(firebaseConfig);
-    const db = getDatabase(app);
-
-    const video = document.getElementById('video');
-    const canvasThumb = document.getElementById('canvasThumb');
-    const logBox = document.getElementById('logBox');
-
-    function log(msg, tipo = '') {
-      const hora = new Date().toLocaleTimeString();
-      let classe = '';
-      if (tipo === 'ok') classe = 'log-ok';
-      if (tipo === 'err') classe = 'log-err';
-      if (tipo === 'warn') classe = 'log-warn';
-      logBox.innerHTML += `<div class="${classe}">[${hora}] ${msg}</div>`;
-      logBox.scrollTop = logBox.scrollHeight;
-    }
-
-    async function initCamera() {
+  async function initCamera() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: { exact: "environment" } }, 
+        audio: false 
+      });
+      video.srcObject = stream;
+      log("Câmera traseira ativada!", "ok");
+    } catch (err) {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: "environment" } }, audio: false });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         video.srcObject = stream;
-        log("Câmera traseira ativada!", "ok");
-      } catch (err) {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-          video.srcObject = stream;
-          log("Câmera padrão ativada!", "ok");
-        } catch (e) {
-          log("Erro de câmera: " + e.message, "err");
-        }
+        log("Câmera padrão ativada!", "ok");
+      } catch (e) {
+        log("Erro de câmera: " + e.message, "err");
       }
     }
+  }
 
-    function monitorarTudo() {
-      log("Escutando historico_hidrantes...");
+  // --- Função para salvar foto HD no Disco Local (OPFS) e baixar na Galeria ---
+  async function salvarFotoNoDiscoEGaleria(fotoBase64, idEvento) {
+    try {
+      // 1. Salva na pasta privada permanente do navegador (OPFS - Disco do celular)
+      const root = await navigator.storage.getDirectory();
+      const fileHandle = await root.getFileHandle(`${idEvento}.jpg`, { create: true });
+      const writable = await fileHandle.createWritable();
       
-      const rootRef = ref(db, 'historico_hidrantes');
+      // Converte Base64 para Blob
+      const res = await fetch(fotoBase64);
+      const blob = await res.blob();
+      
+      await writable.write(blob);
+      await writable.close();
+      log("📁 Foto HD gravada no disco rígido do dispositivo!", "ok");
 
-      onValue(rootRef, (snapshot) => {
-        const dados = snapshot.val();
-        if (!dados) {
-          log("Nenhum registro encontrado em /historico_hidrantes", "warn");
-          return;
+      // 2. Dispara o download para que a foto vá para a Galeria/Downloads
+      const linkDownload = document.createElement('a');
+      linkDownload.href = fotoBase64;
+      linkDownload.download = `HIDRANTE_${idEvento}.jpg`;
+      document.body.appendChild(linkDownload);
+      linkDownload.click();
+      document.body.removeChild(linkDownload);
+      log("🖼️ Imagem enviada para a Galeria/Downloads do celular!", "ok");
+
+    } catch (err) {
+      log("Aviso no salvamento em disco: " + err.message, "warn");
+    }
+  }
+
+  // --- Processo de disparo quando ocorre o ALERTA ---
+  async function capturarEAnexarFoto(caminhoCompleto, idEvento) {
+    if (!video.videoWidth) {
+      log("Aguardando inicialização da câmera...", "err");
+      return;
+    }
+
+    log("📸 Capturando imagem do evento...", "warn");
+
+    // 1. Captura HD (1280px com 80% de qualidade)
+    const maxLargura = 1280;
+    const escala = Math.min(1, maxLargura / video.videoWidth);
+    const hdWidth = video.videoWidth * escala;
+    const hdHeight = video.videoHeight * escala;
+
+    canvasHD.width = hdWidth;
+    canvasHD.height = hdHeight;
+    const ctxHD = canvasHD.getContext('2d');
+    ctxHD.drawImage(video, 0, 0, hdWidth, hdHeight);
+    const fotoHDBase64 = canvasHD.toDataURL('image/jpeg', 0.8);
+
+    // Salva localmente no disco e na Galeria
+    salvarFotoNoDiscoEGaleria(fotoHDBase64, idEvento);
+
+    // 2. Captura Thumbnail (160px para envio leve e rápido)
+    const thumbWidth = 160;
+    const thumbHeight = (video.videoHeight / video.videoWidth) * thumbWidth;
+    canvasThumb.width = thumbWidth;
+    canvasThumb.height = thumbHeight;
+    const ctxThumb = canvasThumb.getContext('2d');
+    ctxThumb.drawImage(video, 0, 0, thumbWidth, thumbHeight);
+    const thumbBase64 = canvasThumb.toDataURL('image/jpeg', 0.5);
+
+    // 3. Sobe apenas a Thumbnail para o Firebase
+    try {
+      log("Enviando Thumbnail para o Firebase...", "warn");
+      await update(ref(db, caminhoCompleto), {
+        thumb_base64: thumbBase64
+      });
+      log("✅ Thumbnail enviada com sucesso!", "ok");
+    } catch (err) {
+      log("Erro ao salvar thumbnail: " + err.message, "err");
+    }
+  }
+
+  // --- Escuta de solicitações do Dashboard/Index ---
+  function escutarSolicitacoesHD() {
+    const solicitacoesRef = ref(db, 'solicitacoes_foto');
+
+    onValue(solicitacoesRef, async (snapshot) => {
+      const dados = snapshot.val();
+      if (!dados) return;
+
+      const keys = Object.keys(dados);
+      const ultimaKey = keys[keys.length - 1];
+      const pedido = dados[ultimaKey];
+
+      if (pedido && !pedido.atendido && ultimoCaminhoEvento) {
+        log("⚡ Solicitacao de foto HD recebida da central!", "warn");
+
+        try {
+          // Busca o arquivo do disco rígido local do celular (OPFS)
+          const root = await navigator.storage.getDirectory();
+          const partesCaminho = ultimoCaminhoEvento.split('/');
+          const idEvento = partesCaminho[partesCaminho.length - 1];
+
+          const fileHandle = await root.getFileHandle(`${idEvento}.jpg`);
+          const file = await fileHandle.getFile();
+          
+          // Leitura do arquivo em Base64
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          reader.onloadend = async () => {
+            const base64HD = reader.result;
+
+            // Faz o upload da imagem HD salva no disco para o Firebase
+            await update(ref(db, ultimoCaminhoEvento), {
+              foto_full: base64HD
+            });
+
+            await update(ref(db, `solicitacoes_foto/${ultimaKey}`), {
+              atendido: true
+            });
+
+            log("🚀 Foto HD salva no disco enviada para a central!", "ok");
+          };
+        } catch (err) {
+          log("Erro ao ler foto salva no disco: " + err.message, "err");
         }
+      }
+    });
+  }
 
-        log("Chaves encontradas no banco: " + Object.keys(dados).join(", "), "warn");
+  // Escuta os alertas do Firebase
+  function escutarFirebaseGeral() {
+    const rootRef = ref(db);
 
-        // Procura por qualquer variação do nome do hidrante
-        let hidranteKey = Object.keys(dados).find(k => k.toUpperCase().includes("HIDRANTE"));
-        if (!hidranteKey) hidranteKey = Object.keys(dados)[0];
+    onValue(rootRef, (snapshot) => {
+      const bancoCompleto = snapshot.val();
+      if (!bancoCompleto) return;
 
-        if (hidranteKey) {
-          const eventos = dados[hidranteKey];
-          const keysEventos = Object.keys(eventos);
-          const ultimaChaveEvento = keysEventos[keysEventos.length - 1];
-          const ultimoEvento = eventos[ultimaChaveEvento];
+      let pastaHidrante = null;
+      let caminhoBase = "";
 
-          log(`Último evento em [${hidranteKey}]: ${ultimoEvento.evento}`, "ok");
-
-          if (ultimoEvento.evento === 'ALERTA_MOVIMENTO' && !ultimoEvento.thumb_base64) {
-            log("🎯 ALERTA DETECTADO SEM FOTO! Capturando...", "ok");
-            capturarEAnexarFoto(hidranteKey, ultimaChaveEvento);
+      if (bancoCompleto.historico_hidrantes) {
+        pastaHidrante = bancoCompleto.historico_hidrantes;
+        caminhoBase = "historico_hidrantes";
+      } else {
+        for (let key in bancoCompleto) {
+          if (key.includes("historico_hidrantes") || key.includes("HIDRANTE")) {
+            pastaHidrante = bancoCompleto[key];
+            caminhoBase = key;
+            break;
           }
         }
-      });
-    }
-
-    async function capturarEAnexarFoto(hidranteKey, eventKey) {
-      if (!video.videoWidth) {
-        log("Aguardando inicialização do vídeo...", "err");
-        return;
       }
 
-      const ctxThumb = canvasThumb.getContext('2d');
-      const thumbWidth = 160;
-      const thumbHeight = (video.videoHeight / video.videoWidth) * thumbWidth;
-      canvasThumb.width = thumbWidth;
-      canvasThumb.height = thumbHeight;
-      ctxThumb.drawImage(video, 0, 0, thumbWidth, thumbHeight);
-      
-      const thumbBase64 = canvasThumb.toDataURL('image/jpeg', 0.5);
+      if (!pastaHidrante) return;
 
-      try {
-        log("Enviando foto ao Firebase...", "warn");
-        await update(ref(db, `historico_hidrantes/${hidranteKey}/${eventKey}`), {
-          thumb_base64: thumbBase64
-        });
-        log("✅ FOTO REGISTRADA COM SUCESSO!", "ok");
-      } catch (err) {
-        log("Erro ao salvar foto: " + err.message, "err");
+      let subChave = Object.keys(pastaHidrante).find(k => k.includes("HIDRANTE"));
+      let eventos = subChave ? pastaHidrante[subChave] : pastaHidrante;
+
+      if (eventos && typeof eventos === 'object') {
+        const chavesEventos = Object.keys(eventos);
+        const ultimaChave = chavesEventos[chavesEventos.length - 1];
+        const ultimoEvento = eventos[ultimaChave];
+
+        if (ultimoEvento && typeof ultimoEvento === 'object') {
+          if (ultimoEvento.evento === 'ALERTA_MOVIMENTO' && !ultimoEvento.thumb_base64) {
+            
+            ultimoCaminhoEvento = subChave 
+              ? `${caminhoBase}/${subChave}/${ultimaChave}` 
+              : `${caminhoBase}/${ultimaChave}`;
+              
+            capturarEAnexarFoto(ultimoCaminhoEvento, ultimaChave);
+          }
+        }
       }
-    }
+    });
+  }
 
-    initCamera();
-    monitorarTudo();
-  </script>
-</body>
-</html>
+  initCamera();
+  escutarFirebaseGeral();
+  escutarSolicitacoesHD();
+</script>
