@@ -3,209 +3,492 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Central de Monitoramento - Hidrantes</title>
+  <title>Central de Monitoramento de Hidrantes</title>
+  
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- PROJ4JS (Conversão UTM -> Lat/Long) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
+
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background-color: #0f172a;
-      color: #f8fafc;
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-    h1 { font-size: 1.5rem; margin-bottom: 20px; color: #38bdf8; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body { background-color: #f4f6f9; color: #333; display: flex; flex-direction: column; height: 100vh; }
     
-    .card-hidrante {
-      background-color: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 12px;
-      padding: 16px;
-      width: 100%;
-      max-width: 450px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    }
+    header { background-color: #1a252f; color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+    header h1 { font-size: 1.3rem; display: flex; align-items: center; gap: 10px; }
+    
+    .main-container { display: flex; flex: 1; overflow: hidden; }
+    #map { flex: 1.8; height: 100%; border-right: 2px solid #ddd; }
+    .sidebar { flex: 1.2; display: flex; flex-direction: column; background: white; padding: 20px; overflow: hidden; }
+    
+    .filter-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 10px; }
+    .filter-bar h2 { font-size: 1.05rem; color: #2c3e50; }
+    .filter-bar select { padding: 6px 10px; border-radius: 4px; border: 1px solid #ccc; font-size: 0.85rem; outline: none; }
+    
+    .table-wrapper { flex: 1; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th { position: sticky; top: 0; background-color: #f8f9fa; color: #4a5568; font-weight: 600; text-align: left; padding: 10px 8px; border-bottom: 2px solid #e2e8f0; z-index: 10; }
+    td { text-align: left; padding: 8px; border-bottom: 1px solid #edf2f7; vertical-align: middle; }
+    
+    tbody tr { cursor: pointer; transition: background-color 0.15s ease; }
+    tbody tr:hover { background-color: #f1f5f9; }
 
-    .card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 1px solid #334155;
-      padding-bottom: 8px;
-      margin-bottom: 12px;
-    }
-
-    .status-badge {
-      font-size: 0.8rem;
-      padding: 4px 8px;
-      border-radius: 6px;
-      font-weight: bold;
-    }
-    .badge-normal { background-color: #065f46; color: #34d399; }
-    .badge-alerta { background-color: #881337; color: #fecdd3; }
-
-    .foto-container {
-      width: 100%;
-      aspect-ratio: 4 / 3;
-      background-color: #000;
-      border-radius: 8px;
-      overflow: hidden;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-top: 10px;
-      position: relative;
-    }
-
-    .foto-container img {
-      width: 100%;
-      height: 100%;
+    /* Estilização das Thumbnails */
+    .thumb-img {
+      width: 48px;
+      height: 36px;
       object-fit: cover;
-    }
-
-    .no-img {
-      color: #64748b;
-      font-size: 0.85rem;
-    }
-
-    .info-row {
-      display: flex;
-      justify-content: space-between;
-      font-size: 0.85rem;
-      color: #94a3b8;
-      margin-top: 8px;
-    }
-
-    button {
-      background-color: #0284c7;
-      color: white;
-      border: none;
-      padding: 8px 12px;
-      border-radius: 6px;
-      font-size: 0.85rem;
+      border-radius: 4px;
+      border: 1px solid #cbd5e1;
       cursor: pointer;
-      width: 100%;
-      margin-top: 12px;
-      font-weight: 600;
+      transition: transform 0.2s;
     }
-    button:hover { background-color: #0369a1; }
+    .thumb-img:hover { transform: scale(1.1); }
+    .no-thumb { font-size: 0.75rem; color: #94a3b8; font-style: italic; }
+
+    /* Badges de Status */
+    .badge { padding: 4px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: bold; color: white; display: inline-block; white-space: nowrap; }
+    .badge-verde { background-color: #2ecc71; }
+    .badge-vermelho { background-color: #e74c3c; animation: pulse 1s infinite; }
+    .badge-laranja { background-color: #e67e22; }
+    .badge-cinza { background-color: #7f8c8d; }
+    
+    .btn-reconhecer {
+      display: block; width: 100%; margin-top: 10px; padding: 8px 12px;
+      background-color: #e74c3c; color: white; border: none; border-radius: 4px;
+      cursor: pointer; font-size: 0.8rem; font-weight: bold; text-align: center;
+    }
+    .btn-reconhecer:hover { background-color: #c0392b; }
+
+    /* Modal de Foto Full e Downloads */
+    .modal {
+      display: none; position: fixed; z-index: 1000;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background-color: rgba(0,0,0,0.85);
+      justify-content: center; align-items: center; flex-direction: column;
+    }
+    .modal-content { text-align: center; color: white; position: relative; }
+    .modal img { max-width: 90vw; max-height: 80vh; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+    .modal-close { position: absolute; top: -35px; right: 0; color: white; font-size: 2rem; font-weight: bold; cursor: pointer; }
+    .btn-download {
+      margin-top: 15px; padding: 10px 20px; background-color: #27ae60;
+      color: white; border: none; border-radius: 4px; cursor: pointer;
+      font-weight: bold; text-decoration: none; display: inline-block;
+    }
+    .loading-spinner { color: white; font-size: 1.1rem; }
+
+    @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
   </style>
 </head>
 <body>
 
-  <h1>Central de Monitoramento</h1>
+  <header>
+    <h1>🚨 Monitoramento & Histórico em Tempo Real</h1>
+    <div id="status-conexao">Carregando dados do servidor...</div>
+  </header>
 
-  <div class="card-hidrante">
-    <div class="card-header">
-      <h2 id="tituloHidrante">HIDRANTE-001</h2>
-      <span id="badgeStatus" class="status-badge badge-normal">AGUARDANDO</span>
-    </div>
+  <div class="main-container">
+    <div id="map"></div>
 
-    <div class="foto-container">
-      <img id="imgUltimaFoto" src="" alt="" style="display: none;">
-      <span id="txtSemFoto" class="no-img">Nenhuma foto capturada ainda</span>
-    </div>
+    <div class="sidebar">
+      <div class="filter-bar">
+        <h2>📋 Histórico de Eventos</h2>
+        <div>
+          <label for="filtro-hidrante" style="font-size:0.8rem; font-weight:bold; margin-right:4px;">Filtrar:</label>
+          <select id="filtro-hidrante" onchange="renderizarTabelaEAtualizarMapa()">
+            <option value="TODOS">-- Todos os Hidrantes --</option>
+          </select>
+        </div>
+      </div>
 
-    <div class="info-row">
-      <span>Último Evento: <strong id="lblEvento">-</strong></span>
-      <span>Bateria: <strong id="lblBateria">-</strong></span>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Thumb</th>
+              <th>Data / Hora</th>
+              <th>Hidrante</th>
+              <th>Evento</th>
+              <th>Bateria</th>
+            </tr>
+          </thead>
+          <tbody id="tabela-historico"></tbody>
+        </table>
+      </div>
     </div>
-    <div class="info-row">
-      <span>Horário: <strong id="lblHorario">-</strong></span>
-    </div>
-
-    <button id="btnPedirHD" style="display: none;" onclick="solicitarFotoHD()">📷 Solicitar Foto em HD</button>
   </div>
 
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-    import { getDatabase, ref, query, limitToLast, onValue, push } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+  <!-- Modal para Exibição da Imagem Full -->
+  <div id="modal-foto" class="modal">
+    <div class="modal-content">
+      <span class="modal-close" onclick="fecharModalFoto()">&times;</span>
+      <div id="modal-body">
+        <!-- Conteúdo dinâmico: Imagem ou Spinner de Carregamento -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Leaflet & Firebase SDKs -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+  <script>
+    let CADASTRO_HIDRANTES = {};
 
     const firebaseConfig = {
-      apiKey: "uS8i8Q1dBAPRIsTzVJNjh628sFKoJc9vksohMvU4",
-      databaseURL: "https://tampashidrantes-default-rtdb.firebaseio.com",
-      projectId: "tampashidrantes"
+      databaseURL: "https://tampashidrantes-default-rtdb.firebaseio.com"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+
+    const map = L.map('map').setView([-21.7642, -43.3503], 14);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+
+    const marcadoresMapa = {};
+
+    const criarIcone = (cor) => new L.Icon({
+      iconUrl: `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-${cor}.png`,
+      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+      iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
+    });
+
+    const iconeVerde = criarIcone('green');
+    const iconeVermelho = criarIcone('red');
+    const iconeLaranja = criarIcone('orange');
+    const iconeCinza = criarIcone('grey');
+
+    const selectFiltro = document.getElementById('filtro-hidrante');
+
+    function converterUTMparaLatLong(easting, northing, zone) {
+      if (!easting || !northing) return null;
+      const numeroZona = parseInt(String(zone).replace(/\D/g, ''));
+      const projUTM = `+proj=utm +zone=${numeroZona} +south +ellps=WGS84 +datum=WGS84 +units=m +no_defs`;
+      const projWGS84 = "+proj=longlat +datum=WGS84 +no_defs";
+
+      try {
+        const res = proj4(projUTM, projWGS84, [parseFloat(easting), parseFloat(northing)]);
+        return { lat: res[1], lng: res[0] };
+      } catch (err) {
+        return null;
+      }
+    }
+
+    async function carregarHidrantesDoCSV() {
+      try {
+        const resposta = await fetch('hidrantes.csv?v=' + new Date().getTime());
+        if (!resposta.ok) throw new Error("CSV não localizado.");
+
+        const textoCSV = await resposta.text();
+        const linhas = textoCSV.split(/\r\n|\n/);
+        
+        CADASTRO_HIDRANTES = {}; 
+        let bounds = L.latLngBounds();
+        let contador = 0;
+
+        for (let i = 1; i < linhas.length; i++) {
+          const linha = linhas[i].trim();
+          if (!linha) continue;
+
+          const colunas = linha.split(/,|;/);
+          if (colunas.length >= 5) {
+            const id = colunas[0].trim().toUpperCase();
+            const logradouro = colunas[1].trim();
+            const este = colunas[2].trim();
+            const norte = colunas[3].trim();
+            const zona = colunas[4].trim();
+
+            const coords = converterUTMparaLatLong(este, norte, zona);
+
+            if (coords) {
+              CADASTRO_HIDRANTES[id] = {
+                nome: logradouro,
+                lat: coords.lat,
+                lng: coords.lng,
+                utm: `${este} E, ${norte} N (${zona})`
+              };
+              bounds.extend([coords.lat, coords.lng]);
+              contador++;
+            }
+          }
+        }
+
+        inicializarMarcadoresEPopup();
+        if (contador > 0) map.fitBounds(bounds);
+
+      } catch (erro) {
+        document.getElementById('status-conexao').innerHTML = '⚠️ CSV não localizado. Usando padrão.';
+      }
+    }
+
+    function inicializarMarcadoresEPopup() {
+      selectFiltro.innerHTML = '<option value="TODOS">-- Todos os Hidrantes --</option>';
+
+      Object.keys(CADASTRO_HIDRANTES).forEach(id => {
+        const opt = document.createElement('option');
+        opt.value = id; opt.textContent = id;
+        selectFiltro.appendChild(opt);
+
+        const info = CADASTRO_HIDRANTES[id];
+
+        if (!marcadoresMapa[id]) {
+          const marker = L.marker([info.lat, info.lng], { icon: iconeCinza }).addTo(map);
+          marker.on('click', () => {
+            selectFiltro.value = id;
+            renderizarTabelaEAtualizarMapa();
+          });
+          marcadoresMapa[id] = marker;
+        } else {
+          marcadoresMapa[id].setLatLng([info.lat, info.lng]);
+        }
+
+        marcadoresMapa[id].bindPopup(`<b>${id}</b><br>${info.nome}<br><small>UTM: ${info.utm}</small><br>Aguardando dados...`);
+      });
+
+      renderizarTabelaEAtualizarMapa();
+    }
+
+    window.focarHidranteNoMapa = function(idHidrante) {
+      const hidrante = CADASTRO_HIDRANTES[idHidrante];
+      if (hidrante && marcadoresMapa[idHidrante]) {
+        map.flyTo([hidrante.lat, hidrante.lng], 18, { animate: true, duration: 1.2 });
+        marcadoresMapa[idHidrante].openPopup();
+      }
     };
 
-    const app = initializeApp(firebaseConfig);
-    const db = getDatabase(app);
+    function converterVoltsParaPorcentagem(volts) {
+      if (!volts || volts <= 0) return 0;
+      let pct = Math.round(((volts - 3.6) / (4.2 - 3.6)) * 100);
+      if (pct > 100) pct = 100;
+      if (pct < 0) pct = 0;
+      return pct;
+    }
 
-    const ID_HIDRANTE = "HIDRANTE-001"; // Padronizado com traço
-    let ultimoEventKey = null;
+    window.reconhecerAlertaNoMapa = function(idHidrante) {
+      const timestampAtual = Date.now();
+      database.ref(`status_operacional/${idHidrante}`).set({
+        alerta_reconhecido: true,
+        timestamp_reconhecimento: timestampAtual
+      }).then(() => renderizarTabelaEAtualizarMapa());
+    };
 
-    // Monitora o último registro enviado pelo ESP32 no Firebase
-    function carregarUltimoAlerta() {
-      const historicoRef = query(ref(db, `historico_hidrantes/${ID_HIDRANTE}`), limitToLast(1));
+    // --- SOLICITAÇÃO E EXIBIÇÃO DA FOTO FULL ---
+    window.solicitarFotoFull = function(idHidrante, chavePush, event) {
+      if (event) event.stopPropagation(); // Não dispara o clique da linha da tabela
 
-      onValue(historicoRef, (snapshot) => {
-        const dados = snapshot.val();
-        if (!dados) return;
+      const modal = document.getElementById('modal-foto');
+      const modalBody = document.getElementById('modal-body');
+      
+      modalBody.innerHTML = `<div class="loading-spinner">📡 Solicitando foto em alta resolução ao celular...<br><small>Aguarde a transmissão...</small></div>`;
+      modal.style.display = 'flex';
 
-        // Pega a chave do último registro
-        const keys = Object.keys(dados);
-        ultimoEventKey = keys[0];
-        const evento = dados[ultimoEventKey];
+      // 1. Grava no nó de requisições enviando a chave do evento e o ID
+      const reqRef = database.ref('solicitacoes_foto').push();
+      reqRef.set({
+        idHidrante: idHidrante,
+        evento_id: chavePush,
+        timestamp: Date.now(),
+        atendido: false
+      });
 
-        // Atualiza os dados na tela
-        document.getElementById('lblEvento').textContent = evento.evento || 'OK';
-        document.getElementById('lblBateria').textContent = evento.bateria_volts ? `${evento.bateria_volts}V` : 'N/A';
+      // 2. Escuta no evento específico se a foto_full foi gravada pelo camera.html
+      const eventoRef = database.ref(`historico_hidrantes/${idHidrante}/${chavePush}/foto_full`);
+      
+      const listener = eventoRef.on('value', (snapshot) => {
+        const fotoFullUrlOuBase64 = snapshot.val();
+        if (fotoFullUrlOuBase64) {
+          // Exibe a foto recebida e cria botão para salvar localmente no PC
+          const nomeArquivo = `HIDRANTE_${idHidrante}_${chavePush}.jpg`;
+          modalBody.innerHTML = `
+            <img src="${fotoFullUrlOuBase64}" alt="Foto Ampliada">
+            <br>
+            <a href="${fotoFullUrlOuBase64}" download="${nomeArquivo}" class="btn-download">
+              💾 Salvar Foto no PC
+            </a>
+          `;
+          eventoRef.off('value', listener); // Desliga o ouvinte após receber
+        }
+      });
+    };
+
+    window.fecharModalFoto = function() {
+      document.getElementById('modal-foto').style.display = 'none';
+    };
+
+    // PROCESSAMENTO EM TEMPO REAL
+    let historicoBruto = {};
+    let statusOperacionalBruto = {};
+
+    function renderizarTabelaEAtualizarMapa() {
+      const filtroAtual = selectFiltro.value;
+      const tabelaBody = document.getElementById('tabela-historico');
+      tabelaBody.innerHTML = '';
+
+      const agora = Date.now();
+      const LIMITE_24H_MS = 24 * 60 * 60 * 1000;
+
+      let listaEventosCompleta = [];
+      let ultimosEventosPorHidrante = {};
+
+      Object.keys(historicoBruto).forEach(chaveOriginal => {
+        const idHidranteNormalizado = chaveOriginal.trim().toUpperCase();
+        const registros = historicoBruto[chaveOriginal];
+        if (!registros) return;
+
+        Object.keys(registros).forEach(chavePush => {
+          const eventoObj = registros[chavePush];
+          const item = {
+            idHidrante: idHidranteNormalizado,
+            chavePush: chavePush,
+            evento: String(eventoObj.evento || "HEARTBEAT").trim().toUpperCase(),
+            bateria_volts: parseFloat(eventoObj.bateria_volts || 0),
+            timestamp: parseInt(eventoObj.timestamp_servidor || 0),
+            thumb_base64: eventoObj.thumb_base64 || null
+          };
+
+          listaEventosCompleta.push(item);
+
+          if (!ultimosEventosPorHidrante[idHidranteNormalizado] || item.timestamp > ultimosEventosPorHidrante[idHidranteNormalizado].timestamp) {
+            ultimosEventosPorHidrante[idHidranteNormalizado] = item;
+          }
+        });
+      });
+
+      listaEventosCompleta.sort((a, b) => b.timestamp - a.timestamp);
+
+      // Renderização da Tabela
+      listaEventosCompleta.forEach(item => {
+        if (filtroAtual !== "TODOS" && item.idHidrante !== filtroAtual) return;
+
+        const dataFormatada = item.timestamp ? new Date(item.timestamp).toLocaleString('pt-BR') : "--";
+        const bateriaPct = converterVoltsParaPorcentagem(item.bateria_volts);
         
-        if (evento.timestamp_servidor) {
-          const data = new Date(evento.timestamp_servidor);
-          document.getElementById('lblHorario').textContent = data.toLocaleTimeString('pt-BR');
-        } else {
-          document.getElementById('lblHorario').textContent = new Date().toLocaleTimeString('pt-BR');
+        let classBadge = "badge-verde";
+        let textoStatus = "NORMAL";
+
+        if (item.evento === "ALERTA_MOVIMENTO") {
+          classBadge = "badge-vermelho";
+          textoStatus = "MOVIMENTO";
+        } else if (bateriaPct < 30) {
+          classBadge = "badge-laranja";
+          textoStatus = "BATERIA BAIXA";
         }
 
-        // Atualiza Badge de Status
-        const badge = document.getElementById('badgeStatus');
-        if (evento.evento === 'ALERTA_MOVIMENTO') {
-          badge.textContent = '🚨 MOVIMENTO DETECTADO';
-          badge.className = 'status-badge badge-alerta';
-        } else {
-          badge.textContent = '🟢 NORMAL (HEARTBEAT)';
-          badge.className = 'status-badge badge-normal';
+        // Renderização da Thumbnail
+        let celulaFoto = `<span class="no-thumb">Sem foto</span>`;
+        if (item.thumb_base64) {
+          celulaFoto = `
+            <img src="${item.thumb_base64}" 
+                 class="thumb-img" 
+                 onclick="solicitarFotoFull('${item.idHidrante}', '${item.chavePush}', event)" 
+                 title="Clique para solicitar a foto em alta resolução" />
+          `;
         }
 
-        // Atualiza Imagem (prioriza a foto FULL HD se já foi solicitada e gerada)
-        const imgElement = document.getElementById('imgUltimaFoto');
-        const txtSemFoto = document.getElementById('txtSemFoto');
-        const btnPedirHD = document.getElementById('btnPedirHD');
+        const tr = document.createElement('tr');
+        tr.setAttribute('onclick', `focarHidranteNoMapa('${item.idHidrante}')`);
+        tr.title = `Clique para focar o ${item.idHidrante} no mapa`;
+        
+        tr.innerHTML = `
+          <td>${celulaFoto}</td>
+          <td>${dataFormatada}</td>
+          <td><b>${item.idHidrante}</b></td>
+          <td><span class="badge ${classBadge}">${textoStatus}</span></td>
+          <td><b>${bateriaPct}%</b> (${item.bateria_volts.toFixed(2)}V)</td>
+        `;
+        tabelaBody.appendChild(tr);
+      });
 
-        const fotoParaExibir = evento.foto_full || evento.thumb_base64;
+      // Marcadores do Mapa
+      Object.keys(CADASTRO_HIDRANTES).forEach(idHidrante => {
+        const cadastro = CADASTRO_HIDRANTES[idHidrante];
+        const ultimoEvento = ultimosEventosPorHidrante[idHidrante];
+        const opStatus = statusOperacionalBruto[idHidrante] || {};
+        
+        let iconeParaUsar = iconeCinza;
+        let statusMapaTexto = "OFFLINE (>24h sem sinal)";
+        let dataFormatadaMapa = "Nunca";
+        let bateriaPctMapa = 0;
+        let fotoMapaHtml = "";
+        let exibirBotaoLimpar = false;
 
-        if (fotoParaExibir) {
-          imgElement.src = fotoParaExibir;
-          imgElement.style.display = 'block';
-          txtSemFoto.style.display = 'none';
-          btnPedirHD.style.display = 'block';
-        } else {
-          imgElement.style.display = 'none';
-          txtSemFoto.style.display = 'block';
-          btnPedirHD.style.display = 'none';
+        if (ultimoEvento) {
+          const tempoDecorrido = agora - ultimoEvento.timestamp;
+          dataFormatadaMapa = new Date(ultimoEvento.timestamp).toLocaleString('pt-BR');
+          bateriaPctMapa = converterVoltsParaPorcentagem(ultimoEvento.bateria_volts);
+
+          const tsReconhecimento = parseInt(opStatus.timestamp_reconhecimento || 0);
+          const foiReconhecido = opStatus.alerta_reconhecido && (tsReconhecimento >= ultimoEvento.timestamp);
+
+          if (ultimoEvento.thumb_base64) {
+            fotoMapaHtml = `
+              <div style="margin: 8px 0; text-align:center;">
+                <img src="${ultimoEvento.thumb_base64}" 
+                     style="width:100%; max-height:100px; object-fit:cover; border-radius:4px; cursor:pointer;" 
+                     onclick="solicitarFotoFull('${ultimoEvento.idHidrante}', '${ultimoEvento.chavePush}', event)" 
+                     title="Clique para solicitar a foto Full" />
+              </div>
+            `;
+          }
+
+          if (tempoDecorrido > LIMITE_24H_MS) {
+            statusMapaTexto = "OFFLINE (>24h)";
+            iconeParaUsar = iconeCinza;
+          } else if (ultimoEvento.evento === "ALERTA_MOVIMENTO" && !foiReconhecido) {
+            statusMapaTexto = "<b style='color:#e74c3c;'>🚨 ALERTA DE MOVIMENTO</b>";
+            iconeParaUsar = iconeVermelho;
+            exibirBotaoLimpar = true;
+          } else if (bateriaPctMapa < 30) {
+            statusMapaTexto = "<b style='color:#e67e22;'>⚠️ BATERIA BAIXA</b>";
+            iconeParaUsar = iconeLaranja;
+          } else {
+            statusMapaTexto = "<b style='color:#2ecc71;'>NORMAL</b>";
+            iconeParaUsar = iconeVerde;
+          }
+        }
+
+        if (marcadoresMapa[idHidrante]) {
+          const marker = marcadoresMapa[idHidrante];
+          marker.setIcon(iconeParaUsar);
+          
+          let htmlPopup = `
+            <div style="min-width: 190px;">
+              <h3 style="margin-bottom:5px; font-size:1rem;">${idHidrante}</h3>
+              <p style="font-size:0.85rem; color:#555; margin-bottom:8px;">${cadastro.nome}</p>
+              ${fotoMapaHtml}
+              <p style="font-size:0.75rem; color:#777; margin-bottom:8px;"><b>UTM:</b> ${cadastro.utm}</p>
+              <hr style="margin-bottom:8px; border:0; border-top:1px solid #eee;">
+              <b>Status:</b> ${statusMapaTexto}<br>
+              <b>Último Sinal:</b> ${dataFormatadaMapa}<br>
+              <b>Bateria:</b> ${bateriaPctMapa}%
+          `;
+
+          if (exibirBotaoLimpar) {
+            htmlPopup += `
+              <button class="btn-reconhecer" onclick="reconhecerAlertaNoMapa('${idHidrante}')">
+                ✔ Reconhecer Alerta
+              </button>
+            `;
+          }
+
+          htmlPopup += `</div>`;
+          marker.setPopupContent(htmlPopup);
         }
       });
     }
 
-    // Função para pedir foto HD para o celular via Firebase
-    window.solicitarFotoHD = async function() {
-      if (!ultimoEventKey) return;
-      
-      try {
-        await push(ref(db, 'solicitacoes_foto'), {
-          idHidrante: ID_HIDRANTE,
-          evento_id: ultimoEventKey,
-          atendido: false,
-          timestamp: new Date().toISOString()
-        });
-        alert("Solicitação de Foto HD enviada para o celular!");
-      } catch (e) {
-        alert("Erro ao solicitar foto HD: " + e.message);
-      }
-    };
+    carregarHidrantesDoCSV();
 
-    carregarUltimoAlerta();
+    database.ref('status_operacional').on('value', (snapshot) => {
+      statusOperacionalBruto = snapshot.val() || {};
+      renderizarTabelaEAtualizarMapa();
+    });
+
+    database.ref('historico_hidrantes').on('value', (snapshot) => {
+      document.getElementById('status-conexao').innerHTML = '🟢 Conectado em Tempo Real';
+      historicoBruto = snapshot.val() || {};
+      renderizarTabelaEAtualizarMapa();
+    });
   </script>
 </body>
 </html>
