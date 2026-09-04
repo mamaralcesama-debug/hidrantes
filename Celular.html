@@ -42,7 +42,7 @@
     #logBox {
       width: 100%;
       max-width: 360px;
-      height: 200px;
+      height: 220px;
       background-color: #020617;
       border: 1px solid #334155;
       border-radius: 8px;
@@ -56,7 +56,6 @@
     .log-ok { color: #4ade80; }
     .log-warn { color: #fbbf24; }
 
-    /* Tela de erro cobrindo tudo se houver falha crítica */
     #criticalError {
       display: none;
       position: fixed;
@@ -75,7 +74,6 @@
 </head>
 <body>
 
-  <!-- Tela de erro crítico -->
   <div id="criticalError">
     🔴 Erro Crítico!<br>A página não pôde carregar.<br><br>
     <span id="errorDesc" style="font-size: 0.9rem; color: #94a3b8;">Verifique a câmera e se está usando HTTPS.</span>
@@ -92,14 +90,12 @@
 
   <div id="logBox">⚡ Aguardando inicialização...<br></div>
 
-  <!-- Canvas auxiliar para manipulação de imagem -->
   <canvas id="canvasThumb"></canvas>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { getDatabase, ref, update, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
-    // Configuração oficial do Firebase
     const firebaseConfig = {
       apiKey: "AIzaSyA7ZYlYhj-3_7dvYxKccMiKNRdWTnSDb5M",
       authDomain: "tampashidrantes.firebaseapp.com",
@@ -111,18 +107,15 @@
       measurementId: "G-PCDJBGGMKS"
     };
 
-    // --- Tratamento de erro crítico ---
     function showCriticalError(msg) {
       document.getElementById('criticalError').style.display = 'block';
       document.getElementById('errorDesc').textContent = msg;
     }
 
-    // Canvas auxiliar para foto HD em background
     const canvasHD = document.createElement('canvas');
-    let fotoHDSalvaNaMemoria = null; // Versão segura: mantém na memória RAM
+    let fotoHDSalvaNaMemoria = null;
     let ultimoCaminhoEvento = null;
 
-    // Inicializa Firebase com tratamento de erro
     let app, db;
     try {
       app = initializeApp(firebaseConfig);
@@ -145,51 +138,54 @@
       logBox.scrollTop = logBox.scrollHeight;
     }
 
-    // --- Monitor de Conexão com o Firebase ---
     function monitorarConexaoFirebase() {
       const connectedRef = ref(db, ".info/connected");
       onValue(connectedRef, (snap) => {
         if (snap.val() === true) {
           log("🟢 Firebase Conectado!", "ok");
         } else {
-          log("🔴 Firebase Desconectado! Aguardando rede...", "err");
+          log("🔴 Firebase Desconectado!", "err");
         }
       });
     }
 
-    // Inicializa Câmera
     async function initCamera() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        log("❌ Acesso à câmera bloqueado (exige HTTPS).", "err");
+        showCriticalError("A câmera exige HTTPS para funcionar.");
+        return;
+      }
+
       try {
-        log("Tentando acessar câmera traseira...");
+        log("Iniciando câmera traseira...");
         const stream = await navigator.mediaDevices.getUserMedia({ 
           video: { facingMode: { exact: "environment" } }, 
           audio: false 
         });
         video.srcObject = stream;
-        log("Câmera traseira ativada!", "ok");
+        log("📷 Câmera ativada com sucesso!", "ok");
       } catch (err) {
-        log("Câmera traseira não encontrada, tentando câmera padrão...", "warn");
+        log(`⚠️ Tentando câmera padrão (${err.message})...`, "warn");
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
           video.srcObject = stream;
-          log("Câmera padrão ativada!", "ok");
+          log("📷 Câmera padrão ativada!", "ok");
         } catch (e) {
-          log("ERRO DE CÂMERA: " + e.message, "err");
-          showCriticalError("Não foi possível acessar a câmera. Verifique as permissões do navegador.");
+          log("❌ ERRO CRÍTICO NA CÂMERA: " + e.message, "err");
+          showCriticalError("Erro ao acessar a câmera: " + e.message);
         }
       }
     }
 
-    // --- Processo de disparo quando ocorre o ALERTA ---
-    async function capturarECongelarCena(caminhoCompleto, idEvento) {
+    async function capturarECongelarCena(caminhoCompleto) {
       if (!video.videoWidth) {
-        log("Erro: Câmera não pronta para captura.", "err");
+        log("Erro: Vídeo não pronto.", "err");
         return;
       }
 
-      log("📸 ALERTA! Registrando cena...", "warn");
+      log("📸 Capturando imagem do movimento...", "warn");
 
-      // 1. Captura HD (1280px com 80% de qualidade)
+      // Captura HD na RAM
       const maxLargura = 1280;
       const escala = Math.min(1, maxLargura / video.videoWidth);
       const hdWidth = video.videoWidth * escala;
@@ -199,12 +195,10 @@
       canvasHD.height = hdHeight;
       const ctxHD = canvasHD.getContext('2d');
       ctxHD.drawImage(video, 0, 0, hdWidth, hdHeight);
-      
-      // Salva a versão HD na memória RAM temporária do celular
       fotoHDSalvaNaMemoria = canvasHD.toDataURL('image/jpeg', 0.8);
-      log("📁 Foto HD congelada na memória do aparelho.", "ok");
+      log("📁 Foto HD gravada na memória RAM.", "ok");
 
-      // 2. Captura Thumbnail (160px para envio leve e rápido)
+      // Captura Thumbnail
       const thumbWidth = 160;
       const thumbHeight = (video.videoHeight / video.videoWidth) * thumbWidth;
       canvasThumb.width = thumbWidth;
@@ -213,19 +207,17 @@
       ctxThumb.drawImage(video, 0, 0, thumbWidth, thumbHeight);
       const thumbBase64 = canvasThumb.toDataURL('image/jpeg', 0.5);
 
-      // 3. Sobe apenas a Thumbnail para o Firebase
       try {
-        log("Enviando Thumbnail rápida...", "warn");
+        log(`Enviando Thumb para: ${caminhoCompleto}`, "warn");
         await update(ref(db, caminhoCompleto), {
           thumb_base64: thumbBase64
         });
         log("✅ Thumbnail enviada com sucesso!", "ok");
       } catch (err) {
-        log("Erro ao salvar thumbnail: " + err.message, "err");
+        log("Erro ao enviar thumbnail: " + err.message, "err");
       }
     }
 
-    // --- Escuta de solicitações da Central ---
     function escutarSolicitacoesHD() {
       const solicitacoesRef = ref(db, 'solicitacoes_foto');
 
@@ -237,80 +229,61 @@
         const ultimaKey = keys[keys.length - 1];
         const pedido = dados[ultimaKey];
 
-        // Se houver solicitação não atendida e foto na memória
         if (pedido && !pedido.atendido && ultimoCaminhoEvento && fotoHDSalvaNaMemoria) {
-          log("⚡ Solicitação de foto HD recebida da central!", "warn");
+          log("⚡ Solicitação de foto HD recebida!", "warn");
 
           try {
-            log("🚀 Enviando foto HD congelada para a central...", "warn");
-            
-            // Upload da imagem HD salva na memória RAM para o Firebase
             await update(ref(db, ultimoCaminhoEvento), {
               foto_full: fotoHDSalvaNaMemoria
             });
 
-            // Marca o pedido como atendido
             await update(ref(db, `solicitacoes_foto/${ultimaKey}`), {
               atendido: true
             });
 
-            log("✅ Foto HD da cena enviada com sucesso!", "ok");
+            log("✅ Foto HD enviada para a central!", "ok");
           } catch (err) {
-            log("Erro ao subir foto HD: " + err.message, "err");
+            log("Erro foto HD: " + err.message, "err");
           }
         }
       });
     }
 
-    // --- Escuta os alertas do Firebase ---
+    // Busca eventos em qualquer profundidade do Firebase
     function escutarFirebaseGeral() {
       const rootRef = ref(db);
 
       onValue(rootRef, (snapshot) => {
-        const bancoCompleto = snapshot.val();
-        if (!bancoCompleto) return;
+        const dados = snapshot.val();
+        if (!dados) return;
 
-        let pastaHidrante = null;
-        let caminhoBase = "";
+        // Função recursiva para varrer o JSON do banco
+        function varrerObjeto(obj, caminhoAtual) {
+          if (!obj || typeof obj !== 'object') return;
 
-        if (bancoCompleto.historico_hidrantes) {
-          pastaHidrante = bancoCompleto.historico_hidrantes;
-          caminhoBase = "historico_hidrantes";
-        } else {
-          for (let key in bancoCompleto) {
-            if (key.includes("historico_hidrantes") || key.includes("HIDRANTE")) {
-              pastaHidrante = bancoCompleto[key];
-              caminhoBase = key;
-              break;
+          // Verifica se o objeto atual é um evento de movimento
+          const ehAlerta = (obj.evento === 'ALERTA_MOVIMENTO' || obj.tipo === 'ALERTA_MOVIMENTO' || obj.status === 'ALERTA_MOVIMENTO');
+
+          if (ehAlerta && !obj.thumb_base64) {
+            log(`🎯 Alerta detectado no caminho: ${caminhoAtual}`, "warn");
+            ultimoCaminhoEvento = caminhoAtual;
+            capturarECongelarCena(caminhoAtual);
+            return;
+          }
+
+          // Se não for o nó final, continua navegando nos nós filhos
+          for (const key in obj) {
+            if (typeof obj[key] === 'object' && obj[key] !== null) {
+              const novoCaminho = caminhoAtual ? `${caminhoAtual}/${key}` : key;
+              varrerObjeto(obj[key], novoCaminho);
             }
           }
         }
 
-        if (!pastaHidrante) return;
-
-        let subChave = Object.keys(pastaHidrante).find(k => k.includes("HIDRANTE"));
-        let eventos = subChave ? pastaHidrante[subChave] : pastaHidrante;
-
-        if (eventos && typeof eventos === 'object') {
-          const chavesEventos = Object.keys(eventos);
-          const ultimaChave = chavesEventos[chavesEventos.length - 1];
-          const ultimoEvento = eventos[ultimaChave];
-
-          if (ultimoEvento && typeof ultimoEvento === 'object') {
-            if (ultimoEvento.evento === 'ALERTA_MOVIMENTO' && !ultimoEvento.thumb_base64) {
-              
-              ultimoCaminhoEvento = subChave 
-                ? `${caminhoBase}/${subChave}/${ultimaChave}` 
-                : `${caminhoBase}/${ultimaChave}`;
-                
-              capturarECongelarCena(ultimoCaminhoEvento, ultimaChave);
-            }
-          }
-        }
+        varrerObjeto(dados, "");
       });
     }
 
-    // Inicializa tudo
     initCamera();
     monitorarConexaoFirebase();
     escutarFirebaseGeral();
