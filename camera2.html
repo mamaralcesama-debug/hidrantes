@@ -47,7 +47,6 @@
       projectId: "tampashidrantes"
     };
 
-    // Inicializa Firebase
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
 
@@ -60,7 +59,7 @@
       }
     });
 
-    // --- INICIALIZAÇÃO DA CÂMERA (Sem travar o JS) ---
+    // --- INICIALIZAÇÃO DA CÂMERA ---
     async function iniciarCamera() {
       const video = document.getElementById('video');
       log("Iniciando acesso à câmera...", "warn");
@@ -86,9 +85,9 @@
       }
     }
 
-    // --- ESCUTA DE ALERTAS DO ESP32 (Gera Thumbnail) ---
+    // --- ESCUTA DE ALERTAS DO ESP32 (Mapeado no subnó do Hidrante) ---
     function escutarAlertasESP() {
-      const historicoRef = db.ref('historico_hidrantes');
+      const historicoRef = db.ref('historico_hidrantes/HIDRANTE-001');
 
       historicoRef.limitToLast(1).on('child_added', async (snapshot) => {
         const eventoObj = snapshot.val();
@@ -96,37 +95,36 @@
 
         if (!eventoObj) return;
 
-        const tsEvento = eventoObj.timestamp || eventoObj.timestamp_servidor || 0;
+        const tsEvento = eventoObj.timestamp_servidor || eventoObj.timestamp || 0;
         const agora = Date.now();
 
-        // Detecta evento recente (<30s)
+        // Processa alertas ocorridos nos últimos 30 segundos
         if (eventoObj.evento === "ALERTA_MOVIMENTO" && (agora - tsEvento < 30000)) {
           if (ultimoEventoProcessado === chavePush) return;
           ultimoEventoProcessado = chavePush;
 
-          log("📸 ALERTA DO ESP32 DETECTADO! Registrando cena...", "warn");
-          ultimoCaminhoEvento = `historico_hidrantes/${chavePush}`;
+          log("📸 ALERTA DE MOVIMENTO DETECTADO! Registrando foto...", "warn");
+          ultimoCaminhoEvento = `historico_hidrantes/HIDRANTE-001/${chavePush}`;
 
           const video = document.getElementById('video');
           const canvas = document.getElementById('canvasHD');
           const ctx = canvas.getContext('2d');
 
-          // 1. Foto HD para RAM
+          // 1. Guarda foto Full HD (1280x720) na memória RAM
           canvas.width = 1280;
           canvas.height = 720;
           ctx.drawImage(video, 0, 0, 1280, 720);
           fotoHDSalvaNaMemoria = canvas.toDataURL('image/jpeg', 0.8);
 
-          // 2. Thumbnail leve para o Firebase (320x240)
+          // 2. Transmite Thumbnail leve (320x240) para o Firebase
           canvas.width = 320;
           canvas.height = 240;
           ctx.drawImage(video, 0, 0, 320, 240);
           const thumbBase64 = canvas.toDataURL('image/jpeg', 0.5);
 
-          // Salva no Firebase
           try {
             await db.ref(ultimoCaminhoEvento).update({ thumb_base64: thumbBase64 });
-            log("✅ Thumbnail salva no Firebase!", "ok");
+            log("✅ Thumbnail enviada ao Firebase!", "ok");
           } catch (e) {
             log("Erro ao gravar Thumbnail: " + e.message, "err");
           }
@@ -145,8 +143,10 @@
         if (pedido && !pedido.atendido) {
           log("⚡ Solicitação de foto HD recebida da Central!", "warn");
 
+          const idHidrante = pedido.id_hidrante || pedido.idHidrante || "HIDRANTE-001";
           const eventoId = pedido.evento_id;
-          let caminhoFinal = eventoId ? `historico_hidrantes/${eventoId}` : ultimoCaminhoEvento;
+          
+          let caminhoFinal = eventoId ? `historico_hidrantes/${idHidrante}/${eventoId}` : ultimoCaminhoEvento;
 
           if (!caminhoFinal) {
             log("⚠️ Caminho do evento não localizado para anexar foto HD.", "err");
@@ -156,7 +156,7 @@
           try {
             let fotoParaEnviar = fotoHDSalvaNaMemoria;
 
-            // Se não estava em RAM, faz captura ao vivo
+            // Se não houver em RAM, faz captura ao vivo
             if (!fotoParaEnviar) {
               const video = document.getElementById('video');
               const canvas = document.getElementById('canvasHD');
@@ -166,9 +166,8 @@
               fotoParaEnviar = canvas.toDataURL('image/jpeg', 0.8);
             }
 
-            // Anexa a Foto Full no evento
+            // Anexa a Foto Full no evento correto
             await db.ref(caminhoFinal).update({ foto_full: fotoParaEnviar });
-            // Marca solicitação como concluída
             await db.ref(`solicitacoes_foto/${key}`).update({ atendido: true });
 
             log("🚀 Foto HD enviada com sucesso para a Central!", "ok");
