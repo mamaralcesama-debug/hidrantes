@@ -85,51 +85,71 @@
       }
     }
 
-    // --- ESCUTA DE ALERTAS DO ESP32 (Mapeado no subnó do Hidrante) ---
+    // --- ESCUTA ADAPTATIVA DE ALERTAS DO ESP32 ---
     function escutarAlertasESP() {
-      const historicoRef = db.ref('historico_hidrantes/HIDRANTE-001');
+      const historicoRef = db.ref('historico_hidrantes');
 
-      historicoRef.limitToLast(1).on('child_added', async (snapshot) => {
-        const eventoObj = snapshot.val();
-        const chavePush = snapshot.key;
+      historicoRef.on('child_added', (snapshot) => {
+        const chave = snapshot.key;
+        const valor = snapshot.val();
 
-        if (!eventoObj) return;
+        if (!valor) return;
 
-        const tsEvento = eventoObj.timestamp_servidor || eventoObj.timestamp || 0;
-        const agora = Date.now();
-
-        // Processa alertas ocorridos nos últimos 30 segundos
-        if (eventoObj.evento === "ALERTA_MOVIMENTO" && (agora - tsEvento < 30000)) {
-          if (ultimoEventoProcessado === chavePush) return;
-          ultimoEventoProcessado = chavePush;
-
-          log("📸 ALERTA DE MOVIMENTO DETECTADO! Registrando foto...", "warn");
-          ultimoCaminhoEvento = `historico_hidrantes/HIDRANTE-001/${chavePush}`;
-
-          const video = document.getElementById('video');
-          const canvas = document.getElementById('canvasHD');
-          const ctx = canvas.getContext('2d');
-
-          // 1. Guarda foto Full HD (1280x720) na memória RAM
-          canvas.width = 1280;
-          canvas.height = 720;
-          ctx.drawImage(video, 0, 0, 1280, 720);
-          fotoHDSalvaNaMemoria = canvas.toDataURL('image/jpeg', 0.8);
-
-          // 2. Transmite Thumbnail leve (320x240) para o Firebase
-          canvas.width = 320;
-          canvas.height = 240;
-          ctx.drawImage(video, 0, 0, 320, 240);
-          const thumbBase64 = canvas.toDataURL('image/jpeg', 0.5);
-
-          try {
-            await db.ref(ultimoCaminhoEvento).update({ thumb_base64: thumbBase64 });
-            log("✅ Thumbnail enviada ao Firebase!", "ok");
-          } catch (e) {
-            log("Erro ao gravar Thumbnail: " + e.message, "err");
-          }
+        // Caso 1: O evento foi gravado direto na raiz historico_hidrantes/{evt_id}
+        if (valor.evento) {
+          processarEventoCam(valor, `historico_hidrantes/${chave}`, chave);
+        } 
+        // Caso 2: O evento foi gravado dentro de subnó por ID historico_hidrantes/{ID}/{evt_id}
+        else if (typeof valor === 'object') {
+          const subRef = db.ref(`historico_hidrantes/${chave}`);
+          subRef.limitToLast(1).on('child_added', (subSnap) => {
+            const subValor = subSnap.val();
+            const subChave = subSnap.key;
+            if (subValor && subValor.evento) {
+              processarEventoCam(subValor, `historico_hidrantes/${chave}/${subChave}`, subChave);
+            }
+          });
         }
       });
+    }
+
+    async function processarEventoCam(eventoObj, caminhoNoBanco, chavePush) {
+      if (eventoObj.evento !== "ALERTA_MOVIMENTO") return;
+      if (ultimoEventoProcessado === chavePush) return;
+
+      const tsEvento = eventoObj.timestamp_servidor || eventoObj.timestamp || Date.now();
+      const agora = Date.now();
+
+      // Tolerância de 2 minutos para sincronização de timestamp
+      if (Math.abs(agora - tsEvento) < 120000 || !eventoObj.timestamp_servidor) {
+        ultimoEventoProcessado = chavePush;
+        ultimoCaminhoEvento = caminhoNoBanco;
+
+        log(`📸 MOVIMENTO DETECTADO em [${caminhoNoBanco}]! Capturando...`, "warn");
+
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvasHD');
+        const ctx = canvas.getContext('2d');
+
+        // 1. Armazena foto Full HD (1280x720) na memória RAM
+        canvas.width = 1280;
+        canvas.height = 720;
+        ctx.drawImage(video, 0, 0, 1280, 720);
+        fotoHDSalvaNaMemoria = canvas.toDataURL('image/jpeg', 0.8);
+
+        // 2. Transmite Thumbnail leve (320x240) para o Firebase
+        canvas.width = 320;
+        canvas.height = 240;
+        ctx.drawImage(video, 0, 0, 320, 240);
+        const thumbBase64 = canvas.toDataURL('image/jpeg', 0.5);
+
+        try {
+          await db.ref(caminhoNoBanco).update({ thumb_base64: thumbBase64 });
+          log("✅ Thumbnail gravada no nó do evento com sucesso!", "ok");
+        } catch (e) {
+          log("❌ Erro ao gravar Thumbnail: " + e.message, "err");
+        }
+      }
     }
 
     // --- ESCUTA DE SOLICITAÇÕES HD DA CENTRAL ---
@@ -148,6 +168,11 @@
           
           let caminhoFinal = eventoId ? `historico_hidrantes/${idHidrante}/${eventoId}` : ultimoCaminhoEvento;
 
+          // Se não encontrar o caminho estruturado, tenta a chave direta do evento
+          if (!caminhoFinal && eventoId) {
+            caminhoFinal = `historico_hidrantes/${eventoId}`;
+          }
+
           if (!caminhoFinal) {
             log("⚠️ Caminho do evento não localizado para anexar foto HD.", "err");
             return;
@@ -156,7 +181,7 @@
           try {
             let fotoParaEnviar = fotoHDSalvaNaMemoria;
 
-            // Se não houver em RAM, faz captura ao vivo
+            // Se não houver em RAM, realiza captura ao vivo do feed
             if (!fotoParaEnviar) {
               const video = document.getElementById('video');
               const canvas = document.getElementById('canvasHD');
@@ -166,7 +191,7 @@
               fotoParaEnviar = canvas.toDataURL('image/jpeg', 0.8);
             }
 
-            // Anexa a Foto Full no evento correto
+            // Anexa a Foto Full HD no evento correto
             await db.ref(caminhoFinal).update({ foto_full: fotoParaEnviar });
             await db.ref(`solicitacoes_foto/${key}`).update({ atendido: true });
 
