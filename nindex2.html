@@ -55,7 +55,7 @@
     /* Mapa */
     #map { flex: 1; height: 100%; background: #000; }
 
-    /* Customização dos Marcadores do Leaflet */
+    /* Customização dos Marcadores */
     .leaflet-marker-icon-custom { border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
 
     /* Modal Foto Ampliada */
@@ -63,7 +63,7 @@
     .modal-content { max-width: 90%; max-height: 80%; border-radius: 8px; box-shadow: 0 0 20px rgba(0,0,0,0.8); }
     .modal-close { position: absolute; top: 20px; right: 30px; color: #fff; font-size: 30px; cursor: pointer; }
     .btn-download { margin-top: 15px; padding: 10px 20px; background: #2ed573; color: #fff; text-decoration: none; border-radius: 5px; font-weight: bold; }
-    .loading-spinner { color: #fff; font-size: 1.2rem; }
+    .loading-spinner { color: #fff; font-size: 1.2rem; text-align: center; }
   </style>
 
   <!-- SDK Compatível do Firebase v8 -->
@@ -122,7 +122,6 @@
     });
 
     // --- CONFIGURAÇÃO DO MAPA (LEAFLET) ---
-    // Inicializado no centro de Juiz de Fora / Região Padrão
     const map = L.map('map').setView([-21.7642, -43.3503], 15);
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
@@ -131,10 +130,8 @@
       maxZoom: 19
     }).addTo(map);
 
-    // Dicionário de marcadores do Leaflet para atualização dinâmica
     const marcadores = {};
 
-    // Cadastro de Hidrantes com Geolocalização estática para o Mapa
     const cadastroHidrantes = {
       "HIDRANTE-001": {
         nome: "Hidrante 001 - Rua Principal",
@@ -143,7 +140,7 @@
       }
     };
 
-    // --- ÍCONES CUSTOMIZADOS DO MAPA ---
+    // --- ÍCONES CUSTOMIZADOS ---
     const iconeVerde = L.divIcon({
       className: 'custom-div-icon',
       html: "<div style='background-color:#2ed573; width:16px; height:16px; border-radius:50%; border:2px solid #fff; box-shadow:0 0 8px #2ed573;'></div>",
@@ -158,7 +155,7 @@
       iconAnchor: [10, 10]
     });
 
-    // --- ESCUTA O HISTÓRICO DE EVENTOS EM TEMPO REAL ---
+    // --- ESCUTA HISTÓRICO DE EVENTOS EM TEMPO REAL ---
     const historicoRef = database.ref('historico_hidrantes');
 
     historicoRef.on('value', (snapshot) => {
@@ -166,12 +163,19 @@
       const containerFeed = document.getElementById('feed-hidrantes');
       containerFeed.innerHTML = '';
 
-      // Garante a criação dos cards mesmo se o hidrante ainda não tiver eventos
       Object.keys(cadastroHidrantes).forEach(idHidrante => {
         const infoCadastral = cadastroHidrantes[idHidrante];
-        const eventosDoHidrante = dadosCompletos[idHidrante] || {};
+        let eventosDoHidrante = dadosCompletos[idHidrante] || {};
 
-        // Transforma o objeto de eventos em Array e ordena pelo mais recente
+        // Se o evento foi gravado na raiz sem subpasta de ID, busca por ele
+        if (Object.keys(eventosDoHidrante).length === 0) {
+          Object.keys(dadosCompletos).forEach(chave => {
+            if (dadosCompletos[chave].evento) {
+              eventosDoHidrante[chave] = dadosCompletos[chave];
+            }
+          });
+        }
+
         const chaves = Object.keys(eventosDoHidrante);
         let ultimoEvento = null;
         let chaveUltimoEvento = null;
@@ -181,12 +185,10 @@
           ultimoEvento = eventosDoHidrante[chaveUltimoEvento];
         }
 
-        // Determina o estado (ALERTA ou NORMAL)
         const tsEvento = ultimoEvento ? (ultimoEvento.timestamp_servidor || ultimoEvento.timestamp || 0) : 0;
         const agora = Date.now();
-        const ehAlertaRecente = ultimoEvento && ultimoEvento.evento === "ALERTA_MOVIMENTO" && (agora - tsEvento < 600000); // 10 minutos de retenção visual
+        const ehAlertaRecente = ultimoEvento && ultimoEvento.evento === "ALERTA_MOVIMENTO" && (agora - tsEvento < 600000);
 
-        // Atualiza ou cria Marcador no Mapa
         if (!marcadores[idHidrante]) {
           marcadores[idHidrante] = L.marker([infoCadastral.lat, infoCadastral.lng], {
             icon: ehAlertaRecente ? iconeVermelho : iconeVerde
@@ -195,7 +197,6 @@
           marcadores[idHidrante].setIcon(ehAlertaRecente ? iconeVermelho : iconeVerde);
         }
 
-        // Constrói o HTML do Card
         const card = document.createElement('div');
         card.className = `card-hidrante ${ehAlertaRecente ? 'alerta' : ''}`;
         
@@ -234,7 +235,7 @@
       });
     });
 
-    // --- REQUISIÇÃO E EXIBIÇÃO DA FOTO HD ---
+    // --- SOLICITAÇÃO E EXIBIÇÃO DE FOTO HD (MULTICAMINHO) ---
     window.solicitarFotoFull = function(idHidrante, chavePush, event) {
       if (event) event.stopPropagation();
 
@@ -248,7 +249,6 @@
         </div>`;
       modal.style.display = 'flex';
 
-      // 1. Grava no nó de solicitações
       const reqRef = database.ref('solicitacoes_foto').push();
       reqRef.set({
         id_hidrante: idHidrante,
@@ -257,23 +257,27 @@
         atendido: false
       });
 
-      // 2. Escuta no nó exato do evento a chegada da foto_full
-      const eventoRef = database.ref(`historico_hidrantes/${idHidrante}/${chavePush}/foto_full`);
-      
-      const listener = eventoRef.on('value', (snapshot) => {
-        const fotoFullUrlOuBase64 = snapshot.val();
-        if (fotoFullUrlOuBase64) {
-          const nomeArquivo = `HIDRANTE_${idHidrante}_${chavePush}.jpg`;
-          modalBody.innerHTML = `
-            <img src="${fotoFullUrlOuBase64}" class="modal-content" alt="Foto Ampliada HD">
-            <br>
-            <a href="${fotoFullUrlOuBase64}" download="${nomeArquivo}" class="btn-download">
-              💾 Baixar Foto em Alta Resolução
-            </a>
-          `;
-          eventoRef.off('value', listener);
-        }
-      });
+      const escutarCaminho = (caminho) => {
+        const eventoRef = database.ref(`${caminho}/foto_full`);
+        const listener = eventoRef.on('value', (snapshot) => {
+          const fotoData = snapshot.val();
+          if (fotoData) {
+            const nomeArquivo = `FOTO_${chavePush}.jpg`;
+            modalBody.innerHTML = `
+              <img src="${fotoData}" class="modal-content" alt="Foto Ampliada HD">
+              <br>
+              <a href="${fotoData}" download="${nomeArquivo}" class="btn-download">
+                💾 Baixar Foto em Alta Resolução
+              </a>
+            `;
+            eventoRef.off('value', listener);
+          }
+        });
+      };
+
+      // Tenta escutar na rota com subnó e na rota raiz
+      escutarCaminho(`historico_hidrantes/${idHidrante}/${chavePush}`);
+      escutarCaminho(`historico_hidrantes/${chavePush}`);
     };
 
     window.fecharModal = function() {
