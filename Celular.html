@@ -99,18 +99,19 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { getDatabase, ref, update, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
+    // Configuração oficial do Firebase
     const firebaseConfig = {
       apiKey: "AIzaSyA7ZYlYhj-3_7dvYxKccMiKNRdWTnSDb5M",
-  authDomain: "tampashidrantes.firebaseapp.com",
-  databaseURL: "https://tampashidrantes-default-rtdb.firebaseio.com",
-  projectId: "tampashidrantes",
-  storageBucket: "tampashidrantes.firebasestorage.app",
-  messagingSenderId: "574663080419",
-  appId: "1:574663080419:web:1a1c5fb1f032a2d5e008d6",
-  measurementId: "G-PCDJBGGMKS"
+      authDomain: "tampashidrantes.firebaseapp.com",
+      databaseURL: "https://tampashidrantes-default-rtdb.firebaseio.com",
+      projectId: "tampashidrantes",
+      storageBucket: "tampashidrantes.firebasestorage.app",
+      messagingSenderId: "574663080419",
+      appId: "1:574663080419:web:1a1c5fb1f032a2d5e008d6",
+      measurementId: "G-PCDJBGGMKS"
     };
 
-    // --- Tratamento de erro crítico para evitar tela branca ---
+    // --- Tratamento de erro crítico ---
     function showCriticalError(msg) {
       document.getElementById('criticalError').style.display = 'block';
       document.getElementById('errorDesc').textContent = msg;
@@ -144,10 +145,21 @@
       logBox.scrollTop = logBox.scrollHeight;
     }
 
+    // --- Monitor de Conexão com o Firebase ---
+    function monitorarConexaoFirebase() {
+      const connectedRef = ref(db, ".info/connected");
+      onValue(connectedRef, (snap) => {
+        if (snap.val() === true) {
+          log("🟢 Firebase Conectado!", "ok");
+        } else {
+          log("🔴 Firebase Desconectado! Aguardando rede...", "err");
+        }
+      });
+    }
+
     // Inicializa Câmera
     async function initCamera() {
       try {
-        // Tenta câmera traseira primeiro (facingMode exact)
         log("Tentando acessar câmera traseira...");
         const stream = await navigator.mediaDevices.getUserMedia({ 
           video: { facingMode: { exact: "environment" } }, 
@@ -156,7 +168,6 @@
         video.srcObject = stream;
         log("Câmera traseira ativada!", "ok");
       } catch (err) {
-        // Se falhar (ex: no PC), tenta qualquer câmera disponível
         log("Câmera traseira não encontrada, tentando câmera padrão...", "warn");
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
@@ -189,7 +200,7 @@
       const ctxHD = canvasHD.getContext('2d');
       ctxHD.drawImage(video, 0, 0, hdWidth, hdHeight);
       
-      // Salva a versão HD na memória RAM temporária do celular (método seguro)
+      // Salva a versão HD na memória RAM temporária do celular
       fotoHDSalvaNaMemoria = canvasHD.toDataURL('image/jpeg', 0.8);
       log("📁 Foto HD congelada na memória do aparelho.", "ok");
 
@@ -214,7 +225,7 @@
       }
     }
 
-    // --- Escuta de solicitações do Dashboard/Index ---
+    // --- Escuta de solicitações da Central ---
     function escutarSolicitacoesHD() {
       const solicitacoesRef = ref(db, 'solicitacoes_foto');
 
@@ -226,14 +237,14 @@
         const ultimaKey = keys[keys.length - 1];
         const pedido = dados[ultimaKey];
 
-        // Se houver solicitação não atendida e houver foto na memória
+        // Se houver solicitação não atendida e foto na memória
         if (pedido && !pedido.atendido && ultimoCaminhoEvento && fotoHDSalvaNaMemoria) {
-          log("⚡ Solicitacao de foto HD recebida da central!", "warn");
+          log("⚡ Solicitação de foto HD recebida da central!", "warn");
 
           try {
             log("🚀 Enviando foto HD congelada para a central...", "warn");
             
-            // Faz o upload da imagem HD salva na memória RAM para o Firebase
+            // Upload da imagem HD salva na memória RAM para o Firebase
             await update(ref(db, ultimoCaminhoEvento), {
               foto_full: fotoHDSalvaNaMemoria
             });
@@ -251,7 +262,7 @@
       });
     }
 
-    // --- Escuta os alertas do Firebase (Mesma lógica robusta anterior) ---
+    // --- Escuta os alertas do Firebase ---
     function escutarFirebaseGeral() {
       const rootRef = ref(db);
 
@@ -262,7 +273,6 @@
         let pastaHidrante = null;
         let caminhoBase = "";
 
-        // Tenta achar a pasta de historico, ignorando barras duplas geradas pelo ESP32
         if (bancoCompleto.historico_hidrantes) {
           pastaHidrante = bancoCompleto.historico_hidrantes;
           caminhoBase = "historico_hidrantes";
@@ -286,7 +296,6 @@
           const ultimaChave = chavesEventos[chavesEventos.length - 1];
           const ultimoEvento = eventos[ultimaChave];
 
-          // Verifica se é o evento de alerta e se a thumbnail ainda não foi enviada pelo celular
           if (ultimoEvento && typeof ultimoEvento === 'object') {
             if (ultimoEvento.evento === 'ALERTA_MOVIMENTO' && !ultimoEvento.thumb_base64) {
               
@@ -303,6 +312,7 @@
 
     // Inicializa tudo
     initCamera();
+    monitorarConexaoFirebase();
     escutarFirebaseGeral();
     escutarSolicitacoesHD();
   </script>
