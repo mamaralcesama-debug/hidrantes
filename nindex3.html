@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Central de Monitoramento - Hidrantes</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; background-color: #0f172a; color: #f8fafc; padding: 20px; }
+    h1 { color: #38bdf8; margin-bottom: 20px; text-align: center; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px; max-width: 500px; margin: 0 auto; }
+    .status-badge { display: inline-block; padding: 6px 12px; border-radius: 4px; font-weight: bold; margin-bottom: 12px; }
+    .status-ok { background: #166534; color: #4ade80; }
+    .status-alerta { background: #991b1b; color: #f87171; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    .info-row { font-size: 0.9rem; color: #94a3b8; margin-bottom: 8px; }
+    .img-box { width: 100%; min-height: 200px; background: #020617; border-radius: 6px; display: flex; align-items: center; justify-content: center; margin: 12px 0; overflow: hidden; }
+    .img-box img { width: 100%; height: auto; display: block; }
+    button { width: 100%; padding: 10px; background: #0284c7; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 8px; }
+    button:hover { background: #0369a1; }
+    button.btn-ok { background: #15803d; }
+    button.btn-ok:hover { background: #166534; }
+  </style>
+</head>
+<body>
+
+  <h1>Central de Monitoramento</h1>
+
+  <div class="card">
+    <h2>HIDRANTE-001</h2>
+    <hr style="border-color: #334155; margin: 8px 0;">
+    
+    <div>Status Atual: <span id="statusBadge" class="status-badge status-ok">NORMAL</span></div>
+    <div class="info-row">Bateria: <strong id="lblBateria">-- V</strong></div>
+
+    <div class="img-box" id="imgContainer">
+      <span style="color: #64748b;">Nenhuma imagem capturada</span>
+    </div>
+
+    <button id="btnSolicitarHD" style="display:none;">📷 Solicitar Foto HD em Tempo Real</button>
+    <button id="btnResetar" class="btn-ok">✅ Normalizar Hidrante (Limpar Alerta)</button>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getDatabase, ref, onValue, set, push } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "uS8i8Q1dBAPRIsTzVJNjh628sFKoJc9vksohMvU4",
+      databaseURL: "https://tampashidrantes-default-rtdb.firebaseio.com",
+      projectId: "tampashidrantes"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    const statusBadge = document.getElementById('statusBadge');
+    const lblBateria = document.getElementById('lblBateria');
+    const imgContainer = document.getElementById('imgContainer');
+    const btnSolicitarHD = document.getElementById('btnSolicitarHD');
+    const btnResetar = document.getElementById('btnResetar');
+
+    onValue(ref(db, 'historico_hidrantes/HIDRANTE-001'), (snapshot) => {
+      const eventos = snapshot.val();
+      if (!eventos) {
+        statusBadge.textContent = "NORMAL";
+        statusBadge.className = "status-badge status-ok";
+        lblBateria.textContent = "-- V";
+        imgContainer.innerHTML = '<span style="color: #64748b;">Nenhuma imagem capturada</span>';
+        btnSolicitarHD.style.display = "none";
+        return;
+      }
+
+      const chaves = Object.keys(eventos);
+      const ultimaChave = chaves[chaves.length - 1];
+      const ultimoEvento = eventos[ultimaChave];
+
+      if (ultimoEvento) {
+        if (ultimoEvento.bateria_volts) {
+          lblBateria.textContent = `${ultimoEvento.bateria_volts} V`;
+        }
+
+        if (ultimoEvento.evento === 'ALERTA_MOVIMENTO') {
+          statusBadge.textContent = "⚠️ ALERTA DE MOVIMENTO";
+          statusBadge.className = "status-badge status-alerta";
+          btnSolicitarHD.style.display = "block";
+
+          if (ultimoEvento.foto_full) {
+            imgContainer.innerHTML = `<img src="${ultimoEvento.foto_full}" alt="Foto HD">`;
+          } else if (ultimoEvento.thumb_base64) {
+            imgContainer.innerHTML = `<img src="${ultimoEvento.thumb_base64}" alt="Thumbnail">`;
+          } else {
+            imgContainer.innerHTML = '<span style="color: #fbbf24;">Aguardando foto da câmera...</span>';
+          }
+        }
+      }
+    });
+
+    btnSolicitarHD.addEventListener('click', () => {
+      push(ref(db, 'solicitacoes_foto'), {
+        hidrante: "HIDRANTE-001",
+        atendido: false,
+        timestamp: Date.now()
+      });
+      alert("Solicitação de Foto HD enviada ao celular!");
+    });
+
+    btnResetar.addEventListener('click', async () => {
+      await set(ref(db, 'historico_hidrantes/HIDRANTE-001'), null);
+      await set(ref(db, 'solicitacoes_foto'), null);
+      alert("Hidrante normalizado e alertas limpos!");
+    });
+  </script>
+</body>
+</html>
